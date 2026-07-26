@@ -88,6 +88,11 @@ namespace Sleeptalker.Sleeper2
             // informative. CS2 dialogue path is the same DS layer; carried, verify live.
             if (selected.name == "Continue Button") return;
 
+            // Tutorial modals: the TutorialReader owns that surface — its buffer
+            // enqueues the whole box (including the CONTINUE block); the raw focus
+            // announcement would duplicate it.
+            if (Util.HasAncestor(selected, "Tutorial System")) return;
+
             bool userInitiated = Time.unscaledTime < _userMoveExpires;
 
             if (!userInitiated && !_sceneSettled)

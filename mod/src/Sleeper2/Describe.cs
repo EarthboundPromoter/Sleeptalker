@@ -25,12 +25,6 @@ namespace Sleeptalker.Sleeper2
             string difficulty = DifficultyCard(go);
             if (difficulty != null) return difficulty;
 
-            // Tutorial popup (live finding: the game moves focus to the box's
-            // CONTINUE button) — the focus announcement carries the whole box:
-            // topic, message, then the button.
-            string tutorial = TutorialBox(go);
-            if (tutorial != null) return tutorial;
-
             // Dialogue skill-check responses carry a governing skill ("//INTERFACE")
             // — decision-relevant, appended to the response read. (Odds render on
             // selection via the response FSM's "% Display" state; capture pending.)
@@ -105,39 +99,6 @@ namespace Sleeptalker.Sleeper2
         {
             var tmp = t.GetComponent<TMP_Text>();
             return tmp != null ? tmp.text : null;
-        }
-
-        /// <summary>Full tutorial-box read when focus is inside the Tutorial System:
-        /// "Tutorial: <topic>. <message> <button label> button." Panel = the
-        /// Tutorial System child the focused element belongs to (each panel carries
-        /// its own FSM; structure captured live 2026-07-26: Label Box topic,
-        /// Message body, Button/Text CONTINUE).</summary>
-        private static string TutorialBox(GameObject go)
-        {
-            Transform panel = null;
-            for (var cur = go.transform; cur != null; cur = cur.parent)
-            {
-                if (cur.parent != null && cur.parent.name == "Tutorial System")
-                {
-                    panel = cur;
-                    break;
-                }
-            }
-            if (panel == null) return null;
-
-            var sb = new System.Text.StringBuilder("Tutorial");
-            var topicNode = panel.Find("Label Box");
-            string topic = topicNode != null
-                ? SpeechService.Clean(GetTmpDeep(topicNode)) : null;
-            if (topic != null) sb.Append(": ").Append(topic.TrimStart('/'));
-            sb.Append(". ");
-            var message = panel.Find("Message");
-            string body = message != null ? SpeechService.Clean(GetTmp(message)) : null;
-            if (body != null) sb.Append(body).Append(' ');
-            var button = panel.Find("Button");
-            string label = button != null ? SpeechService.Clean(GetTmpDeep(button)) : null;
-            if (label != null) sb.Append(label).Append(" button.");
-            return sb.ToString();
         }
 
         /// <summary>Response buttons: text + governing skill when the response is a

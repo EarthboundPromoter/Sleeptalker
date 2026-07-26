@@ -37,9 +37,17 @@ namespace Sleeptalker.Sleeper2
             //     popup takes focus OVER an open menu (live finding: Skill Check
             //     Tutorial) — while focus is inside the Tutorial System, the box
             //     owns the keys and the remap stands down. ---
-            var focused = Navigator.Current();
-            bool tutorialUp = focused != null && Util.HasAncestor(focused, "Tutorial System");
-            if (DialogueState.MenuOpen && !tutorialUp)
+            // Tutorial modal: the walkable buffer owns the arrows (Up/Down blocks,
+            // Left/Right repeat); Enter falls through to native CONTINUE dismissal.
+            if (TutorialReader.Up())
+            {
+                if (Input.GetKeyDown(KeyCode.DownArrow)) { TutorialReader.Move(1); return; }
+                if (Input.GetKeyDown(KeyCode.UpArrow)) { TutorialReader.Move(-1); return; }
+                if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
+                { TutorialReader.Repeat(); return; }
+            }
+
+            if (DialogueState.MenuOpen && !TutorialReader.Up())
             {
                 for (int i = 0; i < 9 && i < DialogueState.CurrentResponses.Count; i++)
                 {
