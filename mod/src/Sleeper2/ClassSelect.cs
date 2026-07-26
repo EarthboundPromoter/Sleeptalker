@@ -35,7 +35,18 @@ namespace Sleeptalker.Sleeper2
 
         private static readonly string[] ClassStates = { "OPERATOR", "MACHINIST", "EXTRACTOR" };
 
-        public static bool Active() => GameObject.Find(Root) != null;
+        // The menu stack stays activeInHierarchy across the whole title scene
+        // (live finding: the class canvas was "active" at the press-start gate) —
+        // object presence is NOT screen presence here. The MAIN MENU FSM's state
+        // IS the current screen; "Class Select" is this one.
+        private static PlayMakerFSM _mainMenu;
+
+        public static bool Active()
+        {
+            if (_mainMenu == null)
+                _mainMenu = GameQueries.FindFsm("MAIN MENU");
+            return _mainMenu != null && _mainMenu.ActiveStateName == "Class Select";
+        }
 
         public static void Init()
         {
@@ -43,6 +54,9 @@ namespace Sleeptalker.Sleeper2
             {
                 if (!IsClassState(state)) return;
                 if (fsm == null || !Util.HasAncestor(fsm.gameObject, "Character Select Canvas")) return;
+                // Boot/off-screen entries (the carousel starts in a class state at
+                // scene load) must not speak — only entries while the screen is up.
+                if (!Active()) return;
                 _cursor = 0;
                 _nameAt = Time.unscaledTime + NameDefer;
                 _deadEndCheckAt = -1f;
