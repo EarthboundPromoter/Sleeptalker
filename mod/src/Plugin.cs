@@ -72,6 +72,7 @@ namespace Sleeptalker
             SceneManager.sceneLoaded += (scene, mode) => FocusPatch.OnSceneChanged();
 
             _input = new InputManager();
+            TitleFlow.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -81,6 +82,7 @@ namespace Sleeptalker
         {
             _input.Tick();
             FocusPatch.Tick();
+            TitleFlow.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
         }
