@@ -108,17 +108,18 @@ namespace Sleeptalker.Sleeper2
             SpeechService.Say(rows[_cursor], Priority.Immediate, "class");
         }
 
-        /// <summary>Enter: inside the table, jump to the confirm row (guard against
-        /// silent class lock-in); on the confirm row, let the native activate run.
+        /// <summary>Enter (owner ruling 2026-07-26): the confirm button is the
+        /// deliberate affordance — Enter inside the table does NOT confirm and does
+        /// NOT jump there. It is consumed with a short cue (real focus sits on the
+        /// confirm button throughout, so falling through would fire it silently —
+        /// the lock-in trap this guard closes). On the confirm row, native activate.
         /// Returns true when the key was consumed.</summary>
         public static bool EnterKey()
         {
             var rows = BuildRows();
             if (_cursor >= rows.Count) return false; // on confirm: native path
-            _cursor = rows.Count;
-            var confirm = GameObject.Find(Root + "/Choose Class");
-            if (confirm != null) { Navigator.Select(confirm); return true; }
-            return false;
+            SpeechService.Say("Confirm is below the last row.", Priority.Immediate, "class");
+            return true;
         }
 
         public static void Tick()
