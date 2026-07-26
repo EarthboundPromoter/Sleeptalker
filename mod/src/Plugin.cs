@@ -83,6 +83,7 @@ namespace Sleeptalker
             _input.Tick();
             FocusPatch.Tick();
             TitleFlow.Tick();
+            Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
         }

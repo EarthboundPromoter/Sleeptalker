@@ -17,6 +17,14 @@ namespace Sleeptalker.Sleeper2
         public static string Element(GameObject go, bool detailed)
         {
             if (go == null) return null;
+
+            // Difficulty select (owner ruling, first CS2 ride): highlighting a
+            // difficulty auto-reads its full metadata — name, selected state, and
+            // the rendered description lines. Everything else on that screen
+            // (Tutorials toggle, Confirm, Back) reads as a plain element.
+            string difficulty = DifficultyCard(go);
+            if (difficulty != null) return difficulty;
+
             string label = FirstText(go);
             if (!string.IsNullOrEmpty(label))
             {
@@ -27,6 +35,64 @@ namespace Sleeptalker.Sleeper2
                 return label + role;
             }
             return go.name;
+        }
+
+        /// <summary>Full metadata read for a difficulty button (child of the
+        /// Difficulty Menu's BUTTONS container; hierarchy captured live 2026-07-26).
+        /// Null for anything else — the general path handles it.</summary>
+        private static string DifficultyCard(GameObject go)
+        {
+            Transform card = null;
+            for (var cur = go.transform; cur != null; cur = cur.parent)
+            {
+                if (cur.parent != null && cur.parent.name == "BUTTONS"
+                    && Util.HasAncestor(cur.parent.gameObject, "Difficulty Menu"))
+                {
+                    card = cur;
+                    break;
+                }
+            }
+            if (card == null) return null;
+
+            var sb = new System.Text.StringBuilder();
+            var nameNode = card.Find("Name");
+            var nameText = nameNode != null ? SpeechService.Clean(GetTmp(nameNode)) : null;
+            sb.Append(nameText ?? card.name);
+
+            foreach (Transform child in card)
+            {
+                if (child.name.Contains("SELECTED") && child.gameObject.activeInHierarchy)
+                {
+                    sb.Append(". Selected");
+                    break;
+                }
+            }
+
+            foreach (Transform child in card)
+            {
+                if (!child.name.StartsWith("Description")) continue;
+                if (!child.gameObject.activeInHierarchy) continue;
+                string body = GetTmp(child);
+                if (string.IsNullOrEmpty(body)) continue;
+                foreach (var raw in body.Split('\n'))
+                {
+                    // "- " bullets: the dash marks a list line; spoken form is the
+                    // line as its own sentence.
+                    string line = SpeechService.Clean(raw.TrimStart(' ', '-'));
+                    if (!string.IsNullOrEmpty(line))
+                    {
+                        sb.Append(". ").Append(line.TrimEnd('.'));
+                    }
+                }
+            }
+            sb.Append('.');
+            return sb.ToString();
+        }
+
+        private static string GetTmp(Transform t)
+        {
+            var tmp = t.GetComponent<TMP_Text>();
+            return tmp != null ? tmp.text : null;
         }
 
         /// <summary>First non-empty rendered text on go or its descendants, skipping

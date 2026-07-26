@@ -83,6 +83,29 @@ namespace Sleeptalker.Scaffold
                     Priority.Immediate, "focus");
         }
 
+        // Activation echo (live finding, CS2 first ride): an in-place toggle changes
+        // its own rendered label but fires no focus event — silent flip. After any
+        // activation, re-read the element once it settles; if it is still focused
+        // and reads differently, speak the new state. Unchanged labels stay silent.
+        private const float EchoDefer = 0.3f;
+        private static GameObject _echoGo;
+        private static string _echoBefore;
+        private static float _echoAt = -1f;
+
+        public static void Tick()
+        {
+            if (_echoAt < 0 || Time.unscaledTime < _echoAt) return;
+            _echoAt = -1f;
+            var go = _echoGo;
+            _echoGo = null;
+            if (go == null || !go.activeInHierarchy) return;
+            var es = EventSystem.current;
+            if (es == null || es.currentSelectedGameObject != go) return;
+            string after = ElementDescriber.Element(go, false);
+            if (!string.IsNullOrEmpty(after) && after != _echoBefore)
+                SpeechService.Say(after, Priority.Immediate, "nav");
+        }
+
         private static float _lastActivate = -1f;
 
         /// <summary>Activate the focused element. The game's keyboard map only navigates —
@@ -118,6 +141,7 @@ namespace Sleeptalker.Scaffold
             // keyboard/gamepad, pointer click as fallback). Firing both invokes a
             // Button's onClick twice per press — double-dispatching scripted events
             // (the tutorial-chain hangs, sessions 2 through 6).
+            string before = ElementDescriber.Element(go, false);
             var es = EventSystem.current;
             bool activated = ExecuteEvents.Execute(go, new BaseEventData(es), ExecuteEvents.submitHandler);
             if (!activated)
@@ -129,7 +153,13 @@ namespace Sleeptalker.Scaffold
                 activated = ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerClickHandler);
             }
             if (!activated)
+            {
                 SpeechService.Say("Not activatable.", Priority.Immediate, "nav");
+                return;
+            }
+            _echoGo = go;
+            _echoBefore = before;
+            _echoAt = Time.unscaledTime + EchoDefer;
         }
     }
 }
