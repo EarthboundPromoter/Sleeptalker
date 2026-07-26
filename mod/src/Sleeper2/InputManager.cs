@@ -33,8 +33,13 @@ namespace Sleeptalker.Sleeper2
             GameQueries.EnsureGamepadMode();
 
             // --- Response menu: number picks + vertical remap over the horizontal
-            //     graph (CS1 idiom; CS2 response layout verify-live) ---
-            if (DialogueState.MenuOpen)
+            //     graph (CS1 idiom; CS2 response layout verify-live). A tutorial
+            //     popup takes focus OVER an open menu (live finding: Skill Check
+            //     Tutorial) — while focus is inside the Tutorial System, the box
+            //     owns the keys and the remap stands down. ---
+            var focused = Navigator.Current();
+            bool tutorialUp = focused != null && Util.HasAncestor(focused, "Tutorial System");
+            if (DialogueState.MenuOpen && !tutorialUp)
             {
                 for (int i = 0; i < 9 && i < DialogueState.CurrentResponses.Count; i++)
                 {
