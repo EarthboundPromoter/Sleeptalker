@@ -73,6 +73,7 @@ namespace Sleeptalker
 
             _input = new InputManager();
             TitleFlow.Init();
+            ClassSelect.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -83,6 +84,7 @@ namespace Sleeptalker
             _input.Tick();
             FocusPatch.Tick();
             TitleFlow.Tick();
+            ClassSelect.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();

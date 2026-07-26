@@ -44,6 +44,20 @@ namespace Sleeptalker.Sleeper2
                 if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Left); return; }
             }
 
+            // Class select (owner design): Up/Down walk the class card rows with a
+            // confirm-button handoff at the end; Left/Right drive the carousel FSM's
+            // own swap events; Enter inside the table jumps to confirm first.
+            if (ClassSelect.Active())
+            {
+                if (Input.GetKeyDown(KeyCode.LeftArrow)) { ClassSelect.Swap(-1); return; }
+                if (Input.GetKeyDown(KeyCode.RightArrow)) { ClassSelect.Swap(1); return; }
+                if (Input.GetKeyDown(KeyCode.DownArrow)) { ClassSelect.Browse(1); return; }
+                if (Input.GetKeyDown(KeyCode.UpArrow)) { ClassSelect.Browse(-1); return; }
+                if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    && ClassSelect.EnterKey())
+                    return;
+            }
+
             if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Up); return; }
             if (Input.GetKeyDown(KeyCode.DownArrow)) { Navigator.Move(MoveDirection.Down); return; }
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { Navigator.Move(MoveDirection.Left); return; }
