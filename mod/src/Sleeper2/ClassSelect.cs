@@ -127,9 +127,16 @@ namespace Sleeptalker.Sleeper2
             if (_nameAt >= 0 && Time.unscaledTime >= _nameAt)
             {
                 _nameAt = -1f;
-                string cls = CurrentClass();
-                if (cls != null)
-                    SpeechService.Say(cls + ".", Priority.Immediate, "class");
+                // Owner ruling: a landing (screen load or swap) reads the full top
+                // row — name + description — with the cursor already on it.
+                var rows = BuildRows();
+                if (rows.Count > 0)
+                    SpeechService.Say(rows[0], Priority.Immediate, "class");
+                else
+                {
+                    string cls = CurrentClass();
+                    if (cls != null) SpeechService.Say(cls + ".", Priority.Immediate, "class");
+                }
             }
 
             if (_deadEndCheckAt >= 0 && Time.unscaledTime >= _deadEndCheckAt)
