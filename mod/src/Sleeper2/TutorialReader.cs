@@ -15,10 +15,13 @@ namespace Sleeptalker.Sleeper2
     /// paragraph, "CONTINUE button" last — and every block enqueues for a hands-free
     /// read; Up/Down interrupt and walk blocks, Left/Right repeat the block, Enter
     /// dismisses from anywhere (native focus is genuinely on CONTINUE; dismissal is
-    /// low-stakes by ruling). Bypassing the game's glyph switcher toward keyboard
-    /// variants was REJECTED (owner + evidence 2026-07-26): the PC variant speaks
-    /// native mouse/keyboard controls (still not our keys) and mixed dials threaten
-    /// the gamepad-gated focus machinery — we transcode the Gamepad variant instead.</summary>
+    /// low-stakes by ruling). Glyph strategy (open design, 2026-07-26): FORCING the
+    /// game to render PC variants is off the table (mixed dials threaten the
+    /// gamepad-gated focus machinery), but every panel carries all platform
+    /// variants as co-existing children (census-verified) — the inactive PC
+    /// variant is PULLABLE as a transcode source/decoder ring for the glyph map,
+    /// possibly at runtime. Shape pends the first prompt-bearing tutorial capture
+    /// (in-text sprite tags vs sibling prompt objects).</summary>
     internal static class TutorialReader
     {
         private static readonly TableEngine Table = new TableEngine
