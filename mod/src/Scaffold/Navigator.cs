@@ -125,9 +125,18 @@ namespace Sleeptalker.Scaffold
             Click(go);
         }
 
-        public static void Click(GameObject go)
+        public static void Click(GameObject go) => Click(go, false);
+
+        /// <summary>Pointer-path activation — the sequence a real mouse press sends.
+        /// For machinery that listens to pointer events (EventTrigger-fed FSMs)
+        /// rather than uGUI submit: the tutorial CONTINUE capture (f4641) showed the
+        /// Button consuming submit while the popup's dismissal never saw it. Still
+        /// exactly one dispatch path per press.</summary>
+        public static void PointerClick(GameObject go) => Click(go, true);
+
+        private static void Click(GameObject go, bool pointerPath)
         {
-            Diag.Note("Nav", "click " + (go != null ? go.name : "(null)"));
+            Diag.Note("Nav", (pointerPath ? "pointer-click " : "click ") + (go != null ? go.name : "(null)"));
             // A disabled Selectable swallows clicks silently — say so instead
             // (the game gates buttons this way, e.g. End Cycle during the intro).
             var selectable = go.GetComponent<Selectable>();
@@ -143,14 +152,15 @@ namespace Sleeptalker.Scaffold
             // (the tutorial-chain hangs, sessions 2 through 6).
             string before = ElementDescriber.Element(go, false);
             var es = EventSystem.current;
-            bool activated = ExecuteEvents.Execute(go, new BaseEventData(es), ExecuteEvents.submitHandler);
-            if (!activated)
+            bool activated;
+            if (pointerPath)
             {
-                var ped = new PointerEventData(es);
-                ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerEnterHandler);
-                ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerDownHandler);
-                ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerUpHandler);
-                activated = ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerClickHandler);
+                activated = PointerSequence(go, es);
+            }
+            else
+            {
+                activated = ExecuteEvents.Execute(go, new BaseEventData(es), ExecuteEvents.submitHandler);
+                if (!activated) activated = PointerSequence(go, es);
             }
             if (!activated)
             {
@@ -160,6 +170,27 @@ namespace Sleeptalker.Scaffold
             _echoGo = go;
             _echoBefore = before;
             _echoAt = Time.unscaledTime + EchoDefer;
+        }
+
+        /// <summary>Hover dispatch — pointerEnter/Exit only, no click. The highlight
+        /// path: camera-follow machinery rides hover, not selection (owner ruling
+        /// 2026-07-26: selection is the authored camera move; highlight is the
+        /// follow method). Mirrors the dev bridge's /hover.</summary>
+        public static void Hover(GameObject go, bool exit)
+        {
+            if (go == null) return;
+            var ped = new PointerEventData(EventSystem.current);
+            if (exit) ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerExitHandler);
+            else ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerEnterHandler);
+        }
+
+        private static bool PointerSequence(GameObject go, EventSystem es)
+        {
+            var ped = new PointerEventData(es);
+            ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerEnterHandler);
+            ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerDownHandler);
+            ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerUpHandler);
+            return ExecuteEvents.Execute(go, ped, ExecuteEvents.pointerClickHandler);
         }
     }
 }

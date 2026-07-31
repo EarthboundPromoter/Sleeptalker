@@ -47,6 +47,14 @@ namespace Sleeptalker
                 + "(always recorded in memory for the F3 incident dump regardless).");
 
             SpeechService.Init();
+            Lex.Init();
+            // Modal-primacy source classes (owner design 2026-07-26): these lines
+            // regenerate fresh when a modal dismisses, so under one they drop
+            // rather than hold. Every unlisted source holds and replays (durable
+            // default — never silently lose a future watcher's line).
+            SpeechService.RegisterVolatile("focus");
+            SpeechService.RegisterVolatile("nav");
+            SpeechService.RegisterVolatile("odds");
 
             // Tier seams: the scaffold speaks and diagnoses through injected
             // providers; this composition root is the only place that wires
@@ -69,11 +77,19 @@ namespace Sleeptalker
             var harmony = new Harmony(Id);
             harmony.PatchAll(typeof(Plugin).Assembly);
 
-            SceneManager.sceneLoaded += (scene, mode) => FocusPatch.OnSceneChanged();
+            SceneManager.sceneLoaded += (scene, mode) =>
+            {
+                FocusPatch.OnSceneChanged();
+                StationAtlas.InvalidateScene();
+            };
 
             _input = new InputManager();
             TitleFlow.Init();
             ClassSelect.Init();
+            SkillChecks.Init();
+            Vitals.Init();
+            TutorialReader.Init();
+            ZoneTable.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -86,6 +102,7 @@ namespace Sleeptalker
             TitleFlow.Tick();
             ClassSelect.Tick();
             TutorialReader.Tick();
+            ZoneTable.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();

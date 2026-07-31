@@ -15,9 +15,9 @@ namespace Sleeptalker.Sleeper2
     /// button, Up from there re-enters the table. Left/Right swap classes via the
     /// Moving Panel carousel FSM's own LEFT/RIGHT events; a swap announces only the
     /// landing class name (no auto-read — the ruling), edges repeat the name
-    /// (dead end, no wrap). Enter inside the table jumps to the confirm row first
-    /// (real focus never leaves the button, so a bare Enter would lock the class
-    /// silently — PROVISIONAL guard, owner ruling pending). Rows rebuilt fresh per
+    /// (dead end, no wrap). Enter ALWAYS clicks CONFIRM CLASS and advances, from
+    /// anywhere in the table (owner re-ruling 2026-07-26 — the earlier mid-table
+    /// guard is superseded). Rows rebuilt fresh per
     /// keypress from rendered text. PROVISIONAL WORDING: skill dials "+ Skill"/
     /// "0 Skill"/"No Skill"/"BLOCKED" spoken as plus one/zero/minus one/blocked.
     /// Wart: the MACHINIST panel object is spelled "MACHINST" — panels matched by
@@ -108,17 +108,18 @@ namespace Sleeptalker.Sleeper2
             SpeechService.Say(rows[_cursor], Priority.Immediate, "class");
         }
 
-        /// <summary>Enter (owner ruling 2026-07-26): the confirm button is the
-        /// deliberate affordance — Enter inside the table does NOT confirm and does
-        /// NOT jump there. It is consumed with a short cue (real focus sits on the
-        /// confirm button throughout, so falling through would fire it silently —
-        /// the lock-in trap this guard closes). On the confirm row, native activate.
-        /// Returns true when the key was consumed.</summary>
+        /// <summary>Enter (owner re-ruling 2026-07-26, superseding the mid-table
+        /// guard): Enter ALWAYS clicks CONFIRM CLASS and advances — the table reads
+        /// freely up and down but never stops Enter from confirming. Explicitly
+        /// targets the confirm button rather than trusting focus, same discipline
+        /// as the tutorial CONTINUE ruling. (Difficulty select deliberately keeps
+        /// focused-element activation: the Tutorials toggle lives in that flow.)
+        /// Returns true when the key was handled.</summary>
         public static bool EnterKey()
         {
-            var rows = BuildRows();
-            if (_cursor >= rows.Count) return false; // on confirm: native path
-            SpeechService.Say("Confirm is below the last row.", Priority.Immediate, "class");
+            var confirm = GameObject.Find(Root + "/Choose Class");
+            if (confirm == null) return false; // no button found: native path
+            Navigator.Click(confirm);
             return true;
         }
 

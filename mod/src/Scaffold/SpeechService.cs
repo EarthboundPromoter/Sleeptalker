@@ -89,6 +89,19 @@ namespace Sleeptalker.Scaffold
             text = Clean(text);
             if (string.IsNullOrEmpty(text)) return;
 
+            // Modal primacy (owner design 2026-07-26): while a modal surface holds
+            // the audio, only its own source speaks live. Volatile sources (focus,
+            // nav, odds — lines that regenerate fresh on dismissal) are dropped;
+            // everything else is held latest-per-source and uttered after release.
+            // Durable is the DEFAULT so an unregistered future watcher can never be
+            // silently lost — the worst default failure is a redundant line.
+            if (_modalSource != null && source != _modalSource)
+            {
+                if (!VolatileSources.Contains(source))
+                    PenKeepLatest(new Pending { Text = text, Source = source });
+                return;
+            }
+
             if (priority == Priority.Immediate)
             {
                 // Interrupt current speech but preserve queued lines — queue flushing is
@@ -126,6 +139,57 @@ namespace Sleeptalker.Scaffold
         {
             Queue.Clear();
             _lastQueued = null;
+        }
+
+        // ---------- Modal primacy gate (owner design 2026-07-26) ----------
+
+        private static string _modalSource;
+        private static readonly HashSet<string> VolatileSources = new HashSet<string>();
+        private static readonly List<Pending> Pen = new List<Pending>();
+
+        /// <summary>Mark a source's lines as regenerating (focus, nav, odds): under
+        /// a modal they drop instead of holding, because dismissal re-fires them
+        /// fresh and a held copy would duplicate or contradict the fresh read.
+        /// Registration happens in the composition root — this tier stays
+        /// game-agnostic.</summary>
+        public static void RegisterVolatile(string source) => VolatileSources.Add(source);
+
+        /// <summary>A modal surface claims the audio. Pending queued lines from
+        /// durable sources are preserved into the holding pen (latest per source);
+        /// the rest of the queue — the chatter fighting the modal's arrival — is
+        /// killed. Chained modals keep the pen: it flushes only on release.</summary>
+        public static void BeginModal(string source)
+        {
+            _modalSource = source;
+            foreach (var p in Queue)
+                if (p.Source != source && !VolatileSources.Contains(p.Source))
+                    PenKeepLatest(p);
+            Queue.Clear();
+            _lastQueued = null;
+            // Claiming primacy takes the floor: whatever is mid-utterance stops
+            // now, cleanly, instead of being stomped mid-word when the modal's
+            // first line arrives (ride capture 2026-07-26).
+            try { if (_loaded) Tolk.Tolk_Silence(); } catch { }
+        }
+
+        /// <summary>Release the modal claim and utter the held lines, in arrival
+        /// order, through the normal queued path (its dedupe applies).</summary>
+        public static void EndModal()
+        {
+            if (_modalSource == null) return;
+            _modalSource = null;
+            if (Pen.Count == 0) return;
+            var held = new List<Pending>(Pen);
+            Pen.Clear();
+            foreach (var p in held)
+                Say(p.Text, Priority.Queued, p.Source);
+        }
+
+        private static void PenKeepLatest(Pending p)
+        {
+            for (int i = 0; i < Pen.Count; i++)
+                if (Pen[i].Source == p.Source) { Pen.RemoveAt(i); break; }
+            Pen.Add(p);
         }
 
         /// <summary>Drop only queued entries from one source (e.g. stale game-driven focus

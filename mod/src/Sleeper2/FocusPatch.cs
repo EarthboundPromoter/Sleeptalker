@@ -93,6 +93,16 @@ namespace Sleeptalker.Sleeper2
             // announcement would duplicate it.
             if (Util.HasAncestor(selected, "Tutorial System")) return;
 
+            // Zone-table camera drives: the table already spoke the node; the
+            // selector's follow-up selection of its Location Button is an echo
+            // (the CS1 map-table suppression, ported). Manual WASD walks are
+            // outside the window and speak normally.
+            if (ZoneTable.SuppressLocationFocus(selected))
+            {
+                Plugin.Log.LogInfo("[Focus] zone-drive echo suppressed: " + selected.name);
+                return;
+            }
+
             bool userInitiated = Time.unscaledTime < _userMoveExpires;
 
             if (!userInitiated && !_sceneSettled)

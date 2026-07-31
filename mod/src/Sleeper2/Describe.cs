@@ -26,10 +26,17 @@ namespace Sleeptalker.Sleeper2
             if (difficulty != null) return difficulty;
 
             // Dialogue skill-check responses carry a governing skill ("//INTERFACE")
-            // — decision-relevant, appended to the response read. (Odds render on
-            // selection via the response FSM's "% Display" state; capture pending.)
+            // — decision-relevant, appended to the response read. (The odds the
+            // FSM renders on hover are spoken by SkillChecks off the tier-state
+            // signal, so they follow this read as their own utterance.)
             string response = ResponseWithSkill(go);
             if (response != null) return response;
+
+            // Station location nodes: the camera-proximity selector focuses the
+            // marker's Location Button (live capture 2026-07-26); identity renders
+            // in the sibling billboard. Census-universal vocabulary, all families.
+            string location = LocationNode(go);
+            if (location != null) return location;
 
             string label = FirstText(go);
             if (!string.IsNullOrEmpty(label))
@@ -115,6 +122,28 @@ namespace Sleeptalker.Sleeper2
             if (!string.IsNullOrEmpty(skill))
                 return text + " " + skill.TrimStart('/') + " check.";
             return null; // plain response: the general path reads it
+        }
+
+        /// <summary>Location node read: "PORTRAIT NAME. Description." from the
+        /// billboard above the focused Location Button (Marker -> Billboard
+        /// Elements -> Portrait Name -> Description). Null off-family so the
+        /// general path handles anything else.</summary>
+        private static string LocationNode(GameObject go)
+        {
+            if (go.name != "Location Button") return null;
+            for (var cur = go.transform; cur != null; cur = cur.parent)
+            {
+                if (cur.name != "Billboard Elements") continue;
+                var nameNode = cur.Find("Portrait Name");
+                if (nameNode == null || !nameNode.gameObject.activeInHierarchy) return null;
+                string title = SpeechService.Clean(GetTmp(nameNode));
+                if (string.IsNullOrEmpty(title)) return null;
+                var descNode = nameNode.Find("Description");
+                string desc = descNode != null && descNode.gameObject.activeInHierarchy
+                    ? SpeechService.Clean(GetTmp(descNode)) : null;
+                return title + (!string.IsNullOrEmpty(desc) ? ". " + desc + "." : ".");
+            }
+            return null;
         }
 
         private static string GetTmpDeep(Transform t)

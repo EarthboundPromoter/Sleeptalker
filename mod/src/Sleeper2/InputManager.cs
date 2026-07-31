@@ -38,16 +38,21 @@ namespace Sleeptalker.Sleeper2
             //     Tutorial) — while focus is inside the Tutorial System, the box
             //     owns the keys and the remap stands down. ---
             // Tutorial modal: the walkable buffer owns the arrows (Up/Down blocks,
-            // Left/Right repeat); Enter falls through to native CONTINUE dismissal.
-            if (TutorialReader.Up())
+            // Left/Right repeat); Enter always fires CONTINUE via the pointer path
+            // (owner ruling — native submit is consumed by the Button while the
+            // game's dismissal machinery never sees it, the f4641 trap).
+            if (TutorialReader.Active())
             {
                 if (Input.GetKeyDown(KeyCode.DownArrow)) { TutorialReader.Move(1); return; }
                 if (Input.GetKeyDown(KeyCode.UpArrow)) { TutorialReader.Move(-1); return; }
                 if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
                 { TutorialReader.Repeat(); return; }
+                if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    && TutorialReader.Dismiss())
+                    return;
             }
 
-            if (DialogueState.MenuOpen && !TutorialReader.Up())
+            if (DialogueState.MenuOpen && !TutorialReader.Active())
             {
                 for (int i = 0; i < 9 && i < DialogueState.CurrentResponses.Count; i++)
                 {
@@ -70,6 +75,10 @@ namespace Sleeptalker.Sleeper2
                     && ClassSelect.EnterKey())
                     return;
             }
+
+            // Open-station mode: the zone table owns arrows and Enter — the atlas
+            // nav idiom (owner design 2026-07-26). WASD stays the game's camera.
+            if (ZoneTable.Active() && ZoneTable.HandleKeys()) return;
 
             if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Up); return; }
             if (Input.GetKeyDown(KeyCode.DownArrow)) { Navigator.Move(MoveDirection.Down); return; }
