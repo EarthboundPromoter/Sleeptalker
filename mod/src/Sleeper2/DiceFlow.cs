@@ -62,8 +62,11 @@ namespace Sleeptalker.Sleeper2
                 var sb = new System.Text.StringBuilder(Lex.T("dice.slotted"));
                 if (card != null)
                 {
-                    string odds = Describe.TextUnder(card, "DICE percentages");
-                    if (odds != null) sb.Append(' ').Append(odds).Append('.');
+                    // The odds render in the band/bucket anatomy the dialogue tier
+                    // already transcodes (ride V1 fix: text is never on the
+                    // container itself).
+                    string odds = SkillChecks.ReadOdds(FindDeep(card, "DICE percentages"));
+                    if (odds != null) sb.Append(' ').Append(odds);
                     var button = FindDeep(card, "Dice Slot Button");
                     string label = button != null && button.gameObject.activeInHierarchy
                         ? Describe.FirstText(button.gameObject) : null;
@@ -141,8 +144,11 @@ namespace Sleeptalker.Sleeper2
         /// <summary>Backspace during allocation: fire exactly the events the game's
         /// own Back polls fire (D11 §4) — Reset to an engaged card slot (retract /
         /// close picker from the slot side), else Back to every Active system
-        /// (Reselector out). Never an invented input: same events, same states.</summary>
-        public static void CancelRung()
+        /// (Reselector out). Never an invented input: same events, same states.
+        /// Returns false when nothing was engaged so the caller falls through to
+        /// the next cancel rung — a Backspace must never be swallowed (ride V1:
+        /// transient system states ate presses).</summary>
+        public static bool CancelRung()
         {
             bool sent = false;
             foreach (var fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
@@ -173,7 +179,8 @@ namespace Sleeptalker.Sleeper2
                 }
             }
             if (!sent)
-                Plugin.Log.LogInfo("[Dice] Backspace: no engaged slot or active system");
+                Plugin.Log.LogInfo("[Dice] Backspace: no engaged slot/system — falling through");
+            return sent;
         }
 
         private static Transform FindDeep(Transform root, string name)

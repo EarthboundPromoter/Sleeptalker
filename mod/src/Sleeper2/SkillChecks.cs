@@ -62,6 +62,26 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
 
+            string odds = ReadOdds(container);
+            if (odds == null)
+            {
+                // The tier state activates the buckets in its OnEnter, so postfix
+                // timing should always see them; silence here is capture-worthy.
+                Plugin.Log.LogWarning("[SkillChecks] odds tier " + state + " on "
+                    + fsm.gameObject.name + " rendered no bucket text.");
+                return;
+            }
+            SpeechService.Say(odds, Priority.Queued, "odds");
+        }
+
+        /// <summary>The transcoded read of a DICE percentages container — shared by
+        /// the dialogue tier and the action-card tier (ride V1: cards nest the same
+        /// buckets inside band children Neg/Neu/Pos/Boon/Glitch, one band active at
+        /// a time; the active-only harvest picks exactly the rendered set). Null
+        /// when nothing renders.</summary>
+        internal static string ReadOdds(Transform container)
+        {
+            if (container == null) return null;
             var sb = new StringBuilder();
             foreach (var tmp in container.GetComponentsInChildren<TMP_Text>(false))
             {
@@ -70,16 +90,9 @@ namespace Sleeptalker.Sleeper2
                 if (sb.Length > 0) sb.Append(", ");
                 sb.Append(Transcode(raw));
             }
-            if (sb.Length == 0)
-            {
-                // The tier state activates the buckets in its OnEnter, so postfix
-                // timing should always see them; silence here is capture-worthy.
-                Plugin.Log.LogWarning("[SkillChecks] odds tier " + state + " on "
-                    + fsm.gameObject.name + " rendered no bucket text.");
-                return;
-            }
+            if (sb.Length == 0) return null;
             sb.Append('.');
-            SpeechService.Say(sb.ToString(), Priority.Queued, "odds");
+            return sb.ToString();
         }
 
         /// <summary>"50% POS" -> "50 percent positive". The abbreviation set is

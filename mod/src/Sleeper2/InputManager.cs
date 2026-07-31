@@ -114,12 +114,10 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
             // Dice allocation: mirror the game's own Back polls (D11 §4) — retract
-            // a held/resting die or close the picker, never Leave underneath it.
-            if (GameQueries.DiceAllocationLive())
-            {
-                DiceFlow.CancelRung();
+            // a held/resting die or close the picker. Nothing engaged = fall
+            // through to the view rung (a press must never be swallowed).
+            if (GameQueries.DiceAllocationLive() && DiceFlow.CancelRung())
                 return;
-            }
             var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                 .GetFsmBool("Action View?");
             if (actionView != null && actionView.Value)
