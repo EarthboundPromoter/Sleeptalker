@@ -76,6 +76,10 @@ namespace Sleeptalker.Sleeper2
                     return;
             }
 
+            // Action view: the location table owns the keys — the D4 stacked grid
+            // (its Active() and the zone table's are the same dial, opposite signs).
+            if (LocationTable.Active() && LocationTable.HandleKeys()) return;
+
             // Open-station mode: the zone table owns arrows and Enter — the atlas
             // nav idiom (owner design 2026-07-26). WASD stays the game's camera.
             if (ZoneTable.Active() && ZoneTable.HandleKeys()) return;
@@ -91,14 +95,46 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
 
+            if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
             if (Input.GetKeyDown(KeyCode.F3)) { Diag.IncidentDump("F3"); return; }
         }
 
+        /// <summary>Backspace = the designed cancel, resolved per mode (CS1
+        /// ResolveCancel idiom; the full ladder arrives with the ModeModel). First
+        /// rung, ride V1 finding: the action view had no keyboard way out. The
+        /// game's own out is the Leave button — a GameObject-typed global holds it
+        /// (port-audit §7b) — so Backspace clicks exactly what a pointer would.</summary>
+        private static void ResolveCancel()
+        {
+            var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                .GetFsmBool("Action View?");
+            if (actionView != null && actionView.Value)
+            {
+                var leave = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                    .GetFsmGameObject("Leave Button");
+                if (leave != null && leave.Value != null && leave.Value.activeInHierarchy)
+                {
+                    Navigator.Click(leave.Value);
+                    return;
+                }
+                Plugin.Log.LogWarning(
+                    "[Input] action view up but no live Leave Button global — cancel path capture needed");
+                SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
+                return;
+            }
+            // Other modes: no cancel rung yet (skeleton) — log, stay silent.
+            Plugin.Log.LogInfo("[Input] Backspace: no cancel path in this mode yet");
+        }
+
         private static readonly KeyCode[] ModKeys =
         {
+            // Space was missing from this gate until ride V1 — the table grammar's
+            // Space (full row / detail) never reached the engine. Keep in sync with
+            // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
-            KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Z, KeyCode.F3,
+            KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
+            KeyCode.Z, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
         };

@@ -347,6 +347,12 @@ namespace Sleeptalker.Sleeper2
             ("A Prompt", "prompt.enter"),
             ("B Prompt", "prompt.backspace"),
             ("DPAD", "prompt.arrows"),
+            // Stick prompts (ride V1 capture: the welcome tutorial's LS/RS fell
+            // through to rendered text). The sticks ARE the native camera keys —
+            // W/S scroll, A/D rotate (port-audit §7b, owner ground truth) — so the
+            // B2 transcode names those keys, which the mod deliberately never binds.
+            ("LS", "prompt.scroll-keys"),
+            ("RS", "prompt.rotate-keys"),
         };
 
         /// <summary>Gamepad vocabulary the game authors as words inside text (CS1

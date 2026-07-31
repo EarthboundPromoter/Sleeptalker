@@ -28,7 +28,11 @@ namespace Sleeptalker.Scaffold
                 { "prompt.enter", "Enter" },
                 { "prompt.backspace", "Backspace" },
                 { "prompt.arrows", "the arrow keys" },
+                { "prompt.scroll-keys", "W and S" },
+                { "prompt.rotate-keys", "A and D" },
                 { "prompt.unknown", "(glyph)" },
+                // Cancel resolution
+                { "cancel.none", "No back path here." },
                 // Skill-check odds and resolution
                 { "odds.percent", "percent" },
                 { "odds.positive", "positive" },
@@ -56,6 +60,20 @@ namespace Sleeptalker.Scaffold
                 { "zone.actions.many", "actions" },
                 { "zone.actions.unavailable", "unavailable" },
                 { "zone.desc.none", "none." },
+                // Location (action view) table
+                { "loc.section.actions", "Action cards." },
+                { "loc.section.clocks", "Clock cards." },
+                { "loc.empty", "Nothing here." },
+                { "loc.none", "none." },
+                { "loc.takes-die", "takes a die" },
+                { "loc.card-disabled", "Action card disabled." },
+                { "loc.col.name", "Name" },
+                { "loc.col.requires", "Requires" },
+                { "loc.col.risk", "Risk" },
+                { "loc.col.cost", "Cost" },
+                { "loc.col.predicted", "Predicted" },
+                { "loc.col.narrative", "Narrative" },
+                { "loc.col.progress", "Progress" },
                 // Vitals
                 { "vitals.stress", "Stress" },
                 { "vitals.energy", "Energy" },

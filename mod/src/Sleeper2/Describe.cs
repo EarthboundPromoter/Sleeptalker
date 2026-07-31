@@ -152,6 +152,48 @@ namespace Sleeptalker.Sleeper2
             return tmp != null ? tmp.text : null;
         }
 
+        // ---------- Rendered-text lookups (shared by the card/clock tables) ----------
+
+        /// <summary>Cleaned text of the first active descendant named exactly
+        /// <paramref name="childName"/>; null when absent, inactive, or textless.</summary>
+        public static string TextUnder(Transform root, string childName)
+        {
+            if (root == null) return null;
+            foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
+            {
+                if (tmp.gameObject.name != childName) continue;
+                string text = SpeechService.Clean(tmp.text);
+                return string.IsNullOrEmpty(text) ? null : text;
+            }
+            return null;
+        }
+
+        /// <summary>Cleaned text of the first active descendant whose rendered text
+        /// contains <paramref name="fragment"/> (case-sensitive, rendered truth).</summary>
+        public static string TextContaining(Transform root, string fragment)
+        {
+            if (root == null) return null;
+            foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
+            {
+                string text = SpeechService.Clean(tmp.text);
+                if (!string.IsNullOrEmpty(text) && text.Contains(fragment)) return text;
+            }
+            return null;
+        }
+
+        /// <summary>Strips one layer of surrounding straight or curly quotes
+        /// (clock names render quoted in both games).</summary>
+        public static string TrimQuotes(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            s = s.Trim();
+            if (s.Length >= 2
+                && (s[0] == '"' || s[0] == '“')
+                && (s[s.Length - 1] == '"' || s[s.Length - 1] == '”'))
+                return s.Substring(1, s.Length - 2).Trim();
+            return s;
+        }
+
         /// <summary>First non-empty rendered text on go or its descendants, skipping
         /// controller prompt glyphs (their texts are button-icon codes, not labels)
         /// and alpha-hidden subtrees.</summary>

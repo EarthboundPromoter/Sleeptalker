@@ -225,19 +225,31 @@ namespace Sleeptalker.Sleeper2
             return raw;
         }
 
-        /// <summary>Capacity from the slot's sibling Capacity FSM — its "* Limit"
-        /// float var (Fuel Limit / Supplies Limit, D3). 0 when absent (cryo).</summary>
+        /// <summary>Capacity from the slot's sibling Capacity element. Render truth
+        /// first (ride V1 finding: the FSM's limit var read 0 at announce time while
+        /// the slot rendered "/5" — the Capacity object's own TMP text IS the
+        /// rendered capacity), FSM "* Limit" var as fallback (float, then int).
+        /// 0 when absent (cryo has no Capacity sibling).</summary>
         private static float SiblingLimit(PlayMakerFSM fsm)
         {
             var parent = fsm.transform.parent;
             if (parent == null) return 0f;
             var cap = parent.Find("Capacity");
             if (cap == null) return 0f;
+            var tmp = cap.GetComponent<TMPro.TMP_Text>();
+            if (tmp != null)
+            {
+                float rendered = Util.LeadingInt(SpeechService.Clean(tmp.text));
+                if (rendered > 0f) return rendered;
+            }
             var capFsm = cap.GetComponent<PlayMakerFSM>();
             if (capFsm == null) return 0f;
             foreach (var f in capFsm.FsmVariables.FloatVariables)
-                if (f.Name.EndsWith("Limit")) return f.Value;
-            LogOnce("[Vitals] Capacity FSM under " + parent.name + " has no * Limit var");
+                if (f.Name.EndsWith("Limit") && f.Value > 0f) return f.Value;
+            foreach (var i in capFsm.FsmVariables.IntVariables)
+                if (i.Name.EndsWith("Limit") && i.Value > 0) return i.Value;
+            LogOnce("[Vitals] Capacity under " + parent.name
+                + " renders no number and its FSM has no positive * Limit var");
             return 0f;
         }
 

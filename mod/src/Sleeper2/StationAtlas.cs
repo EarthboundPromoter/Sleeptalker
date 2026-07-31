@@ -303,7 +303,7 @@ namespace Sleeptalker.Sleeper2
             return facet;
         }
 
-        private static string ActionIdentifierOf(Transform card)
+        internal static string ActionIdentifierOf(Transform card)
         {
             foreach (var fsm in card.GetComponentsInChildren<PlayMakerFSM>(true))
             {

@@ -103,6 +103,7 @@ namespace Sleeptalker
             ClassSelect.Tick();
             TutorialReader.Tick();
             ZoneTable.Tick();
+            LocationTable.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
