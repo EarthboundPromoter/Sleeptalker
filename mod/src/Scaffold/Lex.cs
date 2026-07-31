@@ -74,6 +74,17 @@ namespace Sleeptalker.Scaffold
                 { "loc.col.predicted", "Predicted" },
                 { "loc.col.narrative", "Narrative" },
                 { "loc.col.progress", "Progress" },
+                // Dice allocation
+                { "dice.picker", "Die picker." },
+                { "dice.picker-closed", "Picker closed." },
+                { "dice.refused", "Die unavailable." },
+                { "dice.slotted", "Die slotted." },
+                { "dice.returned", "Die returned." },
+                { "dice.die", "Die" },
+                { "dice.die-lower", "die" },
+                { "dice.spent", "spent" },
+                { "dice.broken", "broken" },
+                { "dice.glitched", "glitched" },
                 // Vitals
                 { "vitals.stress", "Stress" },
                 { "vitals.energy", "Energy" },

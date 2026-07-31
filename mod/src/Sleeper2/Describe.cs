@@ -32,6 +32,11 @@ namespace Sleeptalker.Sleeper2
             string response = ResponseWithSkill(go);
             if (response != null) return response;
 
+            // Dice cursors (the picker's native focus stops): die value/state read
+            // from the cursor's own Die reference (decode D11).
+            string die = DiceFlow.CursorRead(go);
+            if (die != null) return die;
+
             // Station location nodes: the camera-proximity selector focuses the
             // marker's Location Button (live capture 2026-07-26); identity renders
             // in the sibling billboard. Census-universal vocabulary, all families.

@@ -91,6 +91,7 @@ namespace Sleeptalker
             Vitals.Init();
             TutorialReader.Init();
             ZoneTable.Init();
+            DiceFlow.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");

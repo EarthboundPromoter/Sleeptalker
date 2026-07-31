@@ -61,7 +61,7 @@ namespace Sleeptalker.Sleeper2
         // ModeModel carries the full CS1 precedence table.) ----------
 
         private static Transform _pauseCanvas;
-        private static PlayMakerFSM _diceSystem;
+        private static PlayMakerFSM[] _diceSystems;
 
         /// <summary>Pause by render truth: the Pause Canvas's effective alpha (the
         /// canvas object stays in the scene; screens hide by alpha — founding CS2
@@ -77,26 +77,47 @@ namespace Sleeptalker.Sleeper2
             return Util.AlphaUpTo(_pauseCanvas) >= 0.05f;
         }
 
-        /// <summary>Dice allocation engaged: the Dice Gamepad System has left its
-        /// Off resting state (live-verified Off at hub idle, §7b). While engaged,
-        /// the game's own dice flow owns the keys; mod tables suspend (excursion,
-        /// not exit). The proper allocation surface arrives with decode D11.</summary>
+        /// <summary>Dice allocation engaged: ANY of the three gamepad dice systems
+        /// (player + Crew 1/2 — D11: a card's slot activates all three together)
+        /// off its Off resting state. INIT is the crew clones' boot self-activate,
+        /// not engagement. While engaged, the game's own dice flow owns the keys;
+        /// mod tables suspend (excursion, not exit).</summary>
         public static bool DiceAllocationLive()
         {
-            if (_diceSystem == null || _diceSystem.gameObject == null)
+            var systems = DiceSystems();
+            for (int i = 0; i < systems.Length; i++)
             {
-                _diceSystem = FindFsm("Dice Gamepad System", "Top UI");
-                if (_diceSystem == null) return false;
+                var fsm = systems[i];
+                if (fsm == null || fsm.gameObject == null
+                    || !fsm.gameObject.activeInHierarchy) continue;
+                string state = fsm.ActiveStateName;
+                if (!string.IsNullOrEmpty(state) && state != "Off" && state != "INIT")
+                    return true;
             }
-            if (!_diceSystem.gameObject.activeInHierarchy) return false;
-            string state = _diceSystem.ActiveStateName;
-            return !string.IsNullOrEmpty(state) && state != "Off";
+            return false;
+        }
+
+        /// <summary>The three gamepad dice systems (player, Crew 1, Crew 2), cached.
+        /// Missing crew systems stay null (template grace).</summary>
+        public static PlayMakerFSM[] DiceSystems()
+        {
+            if (_diceSystems == null
+                || _diceSystems[0] == null || _diceSystems[0].gameObject == null)
+            {
+                _diceSystems = new[]
+                {
+                    FindFsm("Dice Gamepad System", "Top UI"),
+                    FindFsm("Crew 1 Dice Gamepad System"),
+                    FindFsm("Crew 2 Dice Gamepad System"),
+                };
+            }
+            return _diceSystems;
         }
 
         public static void InvalidateScene()
         {
             _pauseCanvas = null;
-            _diceSystem = null;
+            _diceSystems = null;
         }
     }
 }
