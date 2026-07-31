@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Priority = Sleeptalker.Scaffold.Priority;
@@ -8,17 +9,23 @@ using Sleeptalker.Middleware;
 namespace Sleeptalker.Sleeper2
 {
     /// <summary>The station zone table — the general node-table binding on the
-    /// TableEngine (owner design 2026-07-26): rows are StationAtlas nodes, row
-    /// arrival drives the camera to the node (OnRowArrive, the engine's documented
-    /// camera-sync hook), row speech is the rendered billboard, Enter clicks the
-    /// node's Location Button through the game's machinery. The same binding shape
-    /// serves any future node provider (contract, rig, map) — variation lives in
-    /// the provider, not here.
+    /// TableEngine (owner design 2026-07-26; columns to the approved spec
+    /// 2026-07-26/31, decodes D1/D2): rows are StationAtlas nodes, columns are the
+    /// CS1 map-table grammar re-derived for CS2 — Name (flags ride it) | Clock |
+    /// Drives | Actions | Description. Row arrival drives the highlight (hover,
+    /// engine convention), row speech is the compressed row report from the
+    /// rendered billboard, Left/Right browse facets with stable geometry (empty
+    /// cells speak terse facet-specific emptiness, never skip — CS1 ruling 3),
+    /// Space is the full stable-geometry report, Enter commits from ANY cell
+    /// (CS1 ruling 9 — horizontal position is facet browsing).
+    ///
+    /// Architecture per the CS1 "build this flexibly" ruling: a column registry of
+    /// {header, cell provider}; the row model is atlas DATA — strings compose only
+    /// at announce time, in this file's wording (Lex-keyed).
     ///
     /// Coexists with the game's native WASD camera walk: manual panning speaks
-    /// through the focus path (selector -> EventSystem -> Describe's location
-    /// read), table walking speaks table-side and suppresses the selector's echo
-    /// for a beat (the CS1 map-table suppression, ported via NoteDrive).</summary>
+    /// through the focus path, table walking speaks table-side and suppresses the
+    /// selector's echo for a beat (the CS1 map-table suppression).</summary>
     internal static class ZoneTable
     {
         private const float CacheWindow = 0.4f;
@@ -32,14 +39,40 @@ namespace Sleeptalker.Sleeper2
         public static bool SuppressLocationFocus(GameObject go)
             => Time.unscaledTime < _driveEchoUntil && go != null && go.name == "Location Button";
 
+        // ---------- Columns (registry per the CS1 flexibility ruling) ----------
+
+        private sealed class Column
+        {
+            public string HeaderKey;                       // Lex key for the spoken header
+            public Func<StationAtlas.Node, string> Cell;   // content; null/empty = empty cell
+            public string EmptyKey;                        // terse facet-specific emptiness
+        }
+
+        private static readonly Column[] Columns =
+        {
+            new Column { HeaderKey = "zone.col.name",
+                Cell = n => NameCell(StationAtlas.ReadNameFacet(n)),
+                EmptyKey = "zone.empty" },
+            new Column { HeaderKey = "zone.col.clock", Cell = ClockCell,
+                EmptyKey = "zone.clock.none" },
+            new Column { HeaderKey = "zone.col.drives", Cell = DrivesCell,
+                EmptyKey = "zone.drives.none" },
+            new Column { HeaderKey = "zone.col.actions", Cell = ActionsCell,
+                EmptyKey = "zone.actions.none" },
+            new Column { HeaderKey = "zone.col.description",
+                Cell = StationAtlas.ReadDescription,
+                EmptyKey = "zone.desc.none" },
+        };
+
         private static readonly TableEngine Table = new TableEngine
         {
             Rows = () => Nodes().Count,
-            Cols = _ => 1,
-            RowSpeech = (r, c) => RowRead(r),
-            CellSpeech = (r, c) => RowRead(r),
+            Cols = _ => Columns.Length,
+            RowSpeech = (r, c) => RowArriveSpeech(r, c),
+            CellSpeech = (r, c) => CellRead(r, c),
             EmptyRow = () => Lex.T("zone.empty"),
             EmptyCol = () => Lex.T("zone.empty"),
+            EmptyDetail = () => Lex.T("zone.empty"),
             EmptyCommit = () => Lex.T("zone.empty"),
             Source = "zone",
         };
@@ -59,11 +92,13 @@ namespace Sleeptalker.Sleeper2
                 // its Clicker child, the event surface) exactly as the game's
                 // own pointer machinery would; the previous node is un-hovered
                 // first. The focus echo stays suppressed; the table spoke.
+                // Facet reads run after this hover, so the billboard is rendered.
                 _driveEchoUntil = Time.unscaledTime + 1.5f;
                 HoverNode(_hovered, true);
                 HoverNode(button, false);
                 _hovered = button;
             };
+            Table.Detail = (row, col) => Table.Say(FullReport(row));
             Table.Commit = (row, col) =>
             {
                 var nodes = Nodes();
@@ -149,15 +184,107 @@ namespace Sleeptalker.Sleeper2
             return 0;
         }
 
-        /// <summary>Live billboard read — runs AFTER OnRowArrive in the engine's
-        /// MoveRow flow, so the hover's synchronous FSM reaction has already
-        /// rendered the description this reads (owner ruling: capture from the
-        /// highlight, never from a snapshot).</summary>
-        private static string RowRead(int row)
+        // ---------- Speech composition (all reads live-after-hover) ----------
+
+        /// <summary>Row arrival: at the Name column the compressed row report
+        /// (name + flags + non-empty facets — CS1 ruling 3: the row report carries
+        /// the compression); at a held facet column, name + that cell.</summary>
+        private static string RowArriveSpeech(int row, int col)
         {
             var nodes = Nodes();
             if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
-            return StationAtlas.Read(nodes[row], Lex.T("zone.new"));
+            if (col <= 0) return CompressedReport(nodes[row]);
+            var facet = StationAtlas.ReadNameFacet(nodes[row]);
+            return NameCell(facet) + " " + CellRead(row, col);
+        }
+
+        /// <summary>Facet browse: header-labeled cell, stable geometry — an empty
+        /// facet speaks its terse emptiness, never skips (CS1 ruling 3).</summary>
+        private static string CellRead(int row, int col)
+        {
+            var nodes = Nodes();
+            if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
+            if (col < 0 || col >= Columns.Length) col = 0;
+            var column = Columns[col];
+            string content = column.Cell(nodes[row]);
+            if (string.IsNullOrEmpty(content)) content = Lex.T(column.EmptyKey);
+            return Lex.T(column.HeaderKey) + ": " + content;
+        }
+
+        /// <summary>Space: the full stable-geometry report — every facet, headered,
+        /// empty forms included.</summary>
+        private static string FullReport(int row)
+        {
+            var nodes = Nodes();
+            if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
+            var sb = new System.Text.StringBuilder();
+            for (int c = 0; c < Columns.Length; c++)
+                sb.Append(CellRead(row, c)).Append(' ');
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>The compressed row report: name + flags, then only the facets
+        /// that have content, unheadered description last (the CS1 map row idiom).</summary>
+        private static string CompressedReport(StationAtlas.Node node)
+        {
+            var sb = new System.Text.StringBuilder(NameCell(StationAtlas.ReadNameFacet(node)));
+            var clockTexts = new List<string>();
+            if (StationAtlas.ReadClock(node, clockTexts))
+                sb.Append(' ').Append(Lex.T("zone.col.clock")).Append(": ")
+                  .Append(clockTexts.Count > 0
+                      ? string.Join(", ", clockTexts.ToArray())
+                      : Lex.T("zone.clock.shown")).Append('.');
+            var drives = StationAtlas.ReadDrives(node);
+            if (drives.Count > 0)
+                sb.Append(' ').Append(Lex.T("zone.col.drives")).Append(": ")
+                  .Append(string.Join(", ", drives.ToArray())).Append('.');
+            var actions = StationAtlas.ReadActions(node);
+            if (actions.Cards > 0)
+                sb.Append(' ').Append(ActionsPhrase(actions));
+            string desc = StationAtlas.ReadDescription(node);
+            if (!string.IsNullOrEmpty(desc)) sb.Append(' ').Append(desc).Append('.');
+            return sb.ToString();
+        }
+
+        private static string NameCell(StationAtlas.NameFacet facet)
+        {
+            var sb = new System.Text.StringBuilder(facet.Name).Append('.');
+            if (facet.IsNew) sb.Append(' ').Append(Lex.T("zone.new"));
+            if (facet.Disabled) sb.Append(' ').Append(Lex.T("zone.disabled"));
+            return sb.ToString();
+        }
+
+        private static string ClockCell(StationAtlas.Node node)
+        {
+            var texts = new List<string>();
+            if (!StationAtlas.ReadClock(node, texts)) return null;
+            return texts.Count > 0
+                ? string.Join(", ", texts.ToArray())
+                : Lex.T("zone.clock.shown");
+        }
+
+        private static string DrivesCell(StationAtlas.Node node)
+        {
+            var drives = StationAtlas.ReadDrives(node);
+            return drives.Count > 0 ? string.Join(", ", drives.ToArray()) : null;
+        }
+
+        private static string ActionsCell(StationAtlas.Node node)
+        {
+            var actions = StationAtlas.ReadActions(node);
+            return actions.Cards > 0 ? ActionsPhrase(actions) : null;
+        }
+
+        private static string ActionsPhrase(StationAtlas.ActionsFacet actions)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(actions.Cards).Append(' ')
+              .Append(Lex.T(actions.Cards == 1 ? "zone.actions.one" : "zone.actions.many"));
+            if (actions.Unavailable > 0)
+                sb.Append(", ").Append(actions.Unavailable)
+                  .Append(' ').Append(Lex.T("zone.actions.unavailable"));
+            sb.Append('.');
+            return sb.ToString();
         }
     }
 }

@@ -3,6 +3,7 @@ using TMPro;
 using UnityEngine;
 
 using Sleeptalker.Scaffold;
+using Sleeptalker.Middleware;
 
 namespace Sleeptalker.Sleeper2
 {
@@ -156,6 +157,186 @@ namespace Sleeptalker.Sleeper2
         {
             var tmp = t.GetComponent<TMP_Text>();
             return tmp != null ? tmp.text : null;
+        }
+
+        // ---------- Facet readers (zone-table columns; decodes D1/D2, 2026-07-31) ----------
+        // Data, not strings (CS1 map-table architecture ruling): wording composes in
+        // the table's own block. All reads are live-at-speech-time — the table's
+        // hover has already rendered the billboard when these run.
+
+        internal sealed class NameFacet
+        {
+            public string Name;
+            public bool IsNew;      // Marker/Shine Mask/New Shine rendered
+            public bool Disabled;   // Location Button not interactable (CS1 flag ruling)
+        }
+
+        internal sealed class ActionsFacet
+        {
+            public int Cards = -1;  // -1 = no group resolved (cell speaks its empty form)
+            public int Unavailable;
+        }
+
+        public static NameFacet ReadNameFacet(Node node)
+        {
+            var facet = new NameFacet { Name = node.Name };
+            var billboard = node.Root != null
+                ? node.Root.Find("Location Contents/Billboard Elements") : null;
+            if (billboard == null) return facet;
+            var nameNode = billboard.Find("Portrait Name");
+            string live = nameNode != null ? SpeechService.Clean(TmpOf(nameNode)) : null;
+            if (!string.IsNullOrEmpty(live)) facet.Name = live;
+            var shine = billboard.Find("Marker/Shine Mask/New Shine");
+            facet.IsNew = shine != null && shine.gameObject.activeInHierarchy;
+            var button = node.Button != null
+                ? node.Button.GetComponent<UnityEngine.UI.Button>() : null;
+            facet.Disabled = button != null && !button.interactable;
+            return facet;
+        }
+
+        /// <summary>Rendered description line (live). Null when nothing renders.</summary>
+        public static string ReadDescription(Node node)
+        {
+            var billboard = node.Root != null
+                ? node.Root.Find("Location Contents/Billboard Elements") : null;
+            var nameNode = billboard != null ? billboard.Find("Portrait Name") : null;
+            var descNode = nameNode != null ? nameNode.Find("Description") : null;
+            if (descNode == null || !descNode.gameObject.activeInHierarchy) return null;
+            string desc = SpeechService.Clean(TmpOf(descNode));
+            return string.IsNullOrEmpty(desc) ? null : desc;
+        }
+
+        /// <summary>Billboard clock facet: presence by mechanism class (the uniform
+        /// billboard-clock FSM family, states Setter/Updating — census #027), content
+        /// from whatever text it renders. A clock that renders no text is presence-only
+        /// and logs for capture (transcode seam).</summary>
+        public static bool ReadClock(Node node, List<string> texts)
+        {
+            texts.Clear();
+            var billboard = node.Root != null
+                ? node.Root.Find("Location Contents/Billboard Elements") : null;
+            if (billboard == null) return false;
+            bool present = false;
+            foreach (Transform child in billboard)
+            {
+                var fsm = FsmWithStates(child, "Setter", "Updating");
+                if (fsm == null) continue;
+                if (!child.gameObject.activeInHierarchy) continue;
+                present = true;
+                foreach (var tmp in child.GetComponentsInChildren<TMP_Text>())
+                {
+                    if (!tmp.gameObject.activeInHierarchy) continue;
+                    string t = SpeechService.Clean(tmp.text);
+                    if (!string.IsNullOrEmpty(t)) texts.Add(t);
+                }
+                if (texts.Count == 0)
+                    LogOnce("[Atlas] clock on " + node.Name
+                        + " renders no text — transcode capture needed");
+            }
+            return present;
+        }
+
+        /// <summary>Shown drive pips (decode D1): pip-class children of Billboard
+        /// Elements (state set PIP on/PIP off — mechanism class, never instance
+        /// names), listed iff rendered — GameObject active (Complete deactivates
+        /// permanently) and CanvasGroup alpha up. Identity is the pip's own
+        /// Quest Name string (the Dialogue System quest name — the same label the
+        /// journal renders as the drive heading, D5). Drives follow render:
+        /// untracked or non-Active entries simply are not shown (CS1 ruling 5).</summary>
+        public static List<string> ReadDrives(Node node)
+        {
+            var names = new List<string>();
+            var billboard = node.Root != null
+                ? node.Root.Find("Location Contents/Billboard Elements") : null;
+            if (billboard == null) return names;
+            foreach (Transform child in billboard)
+            {
+                var fsm = FsmWithStates(child, "PIP on", "PIP off");
+                if (fsm == null) continue;
+                if (!child.gameObject.activeInHierarchy) continue;
+                var cg = child.GetComponent<CanvasGroup>();
+                float alpha = cg != null ? cg.alpha : Util.AlphaUpTo(child);
+                if (alpha < 0.05f) continue;
+                var quest = fsm.FsmVariables.GetFsmString("Quest Name");
+                if (quest == null || string.IsNullOrEmpty(quest.Value))
+                {
+                    LogOnce("[Atlas] pip without Quest Name under " + node.Name);
+                    continue;
+                }
+                if (!names.Contains(quest.Value)) names.Add(quest.Value);
+            }
+            return names;
+        }
+
+        /// <summary>Actions count (decode D2): the marker FSM's own Location Actions
+        /// pointer names the group — never name-matched; cards are active-self direct
+        /// children owning an FSM with a non-empty Action Identifier (363/363
+        /// controllers carry it); the unavailable subset reads the exact Lua variable
+        /// the card itself reads before graying ("&lt;id&gt;_COMPLETE"). This is a
+        /// re-derivation from the cards' own sources, not an observed render —
+        /// documented caveats (stale switches, crisis) in docs/decodes/D2.</summary>
+        public static ActionsFacet ReadActions(Node node)
+        {
+            var facet = new ActionsFacet();
+            if (node.Root == null) return facet;
+            GameObject group = null;
+            foreach (var fsm in node.Root.GetComponents<PlayMakerFSM>())
+            {
+                var v = fsm.FsmVariables.GetFsmGameObject("Location Actions");
+                if (v != null && v.Value != null) { group = v.Value; break; }
+            }
+            if (group == null)
+            {
+                LogOnce("[Atlas] no Location Actions pointer on " + node.Root.name);
+                return facet;
+            }
+            facet.Cards = 0;
+            foreach (Transform card in group.transform)
+            {
+                if (!card.gameObject.activeSelf) continue;
+                string id = ActionIdentifierOf(card);
+                if (id == null) continue; // clocks, notifications, stress meters
+                facet.Cards++;
+                var complete = LuaStore.Num(id + "_COMPLETE");
+                if (complete.HasValue && complete.Value >= 1) facet.Unavailable++;
+            }
+            return facet;
+        }
+
+        private static string ActionIdentifierOf(Transform card)
+        {
+            foreach (var fsm in card.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                var id = fsm.FsmVariables.GetFsmString("Action Identifier");
+                if (id != null && !string.IsNullOrEmpty(id.Value)) return id.Value;
+            }
+            return null;
+        }
+
+        /// <summary>First FSM on the child whose state set contains both markers —
+        /// mechanism-class matching (universal-hooks rule).</summary>
+        private static PlayMakerFSM FsmWithStates(Transform t, string a, string b)
+        {
+            foreach (var fsm in t.GetComponents<PlayMakerFSM>())
+            {
+                bool hasA = false, hasB = false;
+                var states = fsm.FsmStates;
+                if (states == null) continue;
+                foreach (var s in states)
+                {
+                    if (s.Name == a) hasA = true;
+                    else if (s.Name == b) hasB = true;
+                }
+                if (hasA && hasB) return fsm;
+            }
+            return null;
+        }
+
+        private static readonly HashSet<string> LoggedFacets = new HashSet<string>();
+
+        private static void LogOnce(string line)
+        {
+            if (LoggedFacets.Add(line)) Plugin.Log.LogWarning(line);
         }
 
         // ---------- Camera ----------
