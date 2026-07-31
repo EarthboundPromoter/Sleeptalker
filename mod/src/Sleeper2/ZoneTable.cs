@@ -117,6 +117,9 @@ namespace Sleeptalker.Sleeper2
         {
             if (ConversationEvents.ConversationActive) return false;
             if (TutorialReader.Active()) return false;
+            // Pause outranks everything (CS1 precedence; ride V1 state trap —
+            // the same hole the location table had).
+            if (GameQueries.Paused()) return false;
             var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                 .GetFsmBool("Action View?");
             if (actionView != null && actionView.Value) return false;

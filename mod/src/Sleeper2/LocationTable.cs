@@ -63,16 +63,29 @@ namespace Sleeptalker.Sleeper2
             Source = "location",
         };
 
-        /// <summary>Action view is up (the game's own global dial), no conversation,
-        /// no tutorial. The zone table's Active() is false under the same dial, so
-        /// exactly one of the two owns the keys.</summary>
-        public static bool Active()
+        /// <summary>The view's own dial: Action View? global. True through pause and
+        /// dice allocation — presence of the SURFACE, not ownership of the KEYS.</summary>
+        private static bool ViewUp()
         {
-            if (ConversationEvents.ConversationActive) return false;
-            if (TutorialReader.Active()) return false;
             var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                 .GetFsmBool("Action View?");
             return actionView != null && actionView.Value;
+        }
+
+        /// <summary>Key ownership: view up AND nothing above it holds the floor.
+        /// Ride V1 state trap: pause and dice allocation both keep Action View?
+        /// true — without these stand-downs the table consumed arrows under the
+        /// pause menu and stole focus back from the die picker. Overlays are
+        /// excursions, not exits (CS1 D3): suspension keeps the cursor; only the
+        /// view itself closing resets it (see Tick).</summary>
+        public static bool Active()
+        {
+            if (!ViewUp()) return false;
+            if (ConversationEvents.ConversationActive) return false;
+            if (TutorialReader.Active()) return false;
+            if (GameQueries.Paused()) return false;
+            if (GameQueries.DiceAllocationLive()) return false;
+            return true;
         }
 
         public static bool HandleKeys()
@@ -95,7 +108,9 @@ namespace Sleeptalker.Sleeper2
 
         public static void Tick()
         {
-            if (!Active() && _entered)
+            // Reset only when the VIEW closes — pause/allocation/conversation are
+            // excursions and keep the cursor (CS1 D3 ruling).
+            if (!ViewUp() && _entered)
             {
                 _entered = false;
                 _group = null;
@@ -207,10 +222,12 @@ namespace Sleeptalker.Sleeper2
             var card = actions[row];
             var sb = new System.Text.StringBuilder(ActionRow(card));
             var outcomes = card.Find("OUTCOMES") ?? FindDeep(card, "OUTCOMES");
-            if (outcomes != null && outcomes.gameObject.activeInHierarchy)
+            if (outcomes != null && outcomes.gameObject.activeInHierarchy
+                && Util.AlphaUpTo(outcomes) >= 0.05f)
             {
                 foreach (var tmp in outcomes.GetComponentsInChildren<TMP_Text>(false))
                 {
+                    if (Util.AlphaUpTo(tmp.transform, outcomes) < 0.05f) continue;
                     string t = SpeechService.Clean(tmp.text);
                     if (!string.IsNullOrEmpty(t)) sb.Append(' ').Append(t).Append('.');
                 }
@@ -322,15 +339,19 @@ namespace Sleeptalker.Sleeper2
             => Describe.TextUnder(card, "Cost Label")
                ?? Describe.TextContaining(card, "PER CYCLE");
 
-        /// <summary>The PREDICTIVE perk block — render-gated by the game (perk
-        /// bought = it renders; otherwise silent, CS1 Intuit-cell ruling).</summary>
+        /// <summary>The PREDICTIVE perk block — perk-gated in data (INTUIT_PERKS,
+        /// D15) and render-gated on screen. ALPHA-honest (ride V1: the block sits
+        /// active-but-alpha-hidden without the perk — object presence is not screen
+        /// presence): only effectively-visible text speaks.</summary>
         private static string PredictedCell(Transform card)
         {
             var block = FindDeep(card, "PREDICTIVE");
             if (block == null || !block.gameObject.activeInHierarchy) return null;
+            if (Util.AlphaUpTo(block) < 0.05f) return null;
             var parts = new List<string>();
             foreach (var tmp in block.GetComponentsInChildren<TMP_Text>(false))
             {
+                if (Util.AlphaUpTo(tmp.transform, block) < 0.05f) continue;
                 string t = SpeechService.Clean(tmp.text);
                 if (!string.IsNullOrEmpty(t)) parts.Add(t);
             }
@@ -388,35 +409,29 @@ namespace Sleeptalker.Sleeper2
             }
         }
 
-        /// <summary>Progress from the card's own N Step Clock: steps from the
-        /// element's name (the game's own naming — "6 Step Clock"), value from its
-        /// FSM's clock-named numeric variable. No readable value = name-only row
-        /// plus a capture log (transcode seam, never a guess).</summary>
+        /// <summary>Clock progress: MUZZLED pending the step-clock decode. Ride V1:
+        /// the first-numeric-var guess announced a wrong value — misinformation, the
+        /// worst bug class (CS1 Q1 precedent). Until the family's value variable is
+        /// decoded, rows speak name + narrative only, and this logs the step clock's
+        /// full numeric-variable inventory once per clock as the capture.</summary>
         private static string ClockProgress(Transform clock)
         {
             Transform stepClock = null;
             foreach (var t in clock.GetComponentsInChildren<Transform>(false))
                 if (t.name.EndsWith("Step Clock")) { stepClock = t; break; }
             if (stepClock == null) return null;
-            float steps = Util.LeadingInt(stepClock.name);
+            var inventory = new System.Text.StringBuilder();
             foreach (var fsm in stepClock.GetComponents<PlayMakerFSM>())
             {
                 foreach (var f in fsm.FsmVariables.FloatVariables)
-                    if (f.Name.IndexOf("Clock", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                        return Progress(f.Value, steps);
+                    inventory.Append(f.Name).Append('=').Append(f.Value).Append("; ");
                 foreach (var i in fsm.FsmVariables.IntVariables)
-                    if (i.Name.IndexOf("Clock", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                        return Progress(i.Value, steps);
+                    inventory.Append(i.Name).Append('=').Append(i.Value).Append("; ");
             }
-            LogOnce("[Location] step clock \"" + stepClock.name
-                + "\" has no clock-named numeric var — capture needed");
+            LogOnce("[Location] CLOCK PROGRESS CAPTURE \"" + stepClock.name + "\" on "
+                + clock.name + ": " + inventory);
             return null;
         }
-
-        private static string Progress(float value, float steps)
-            => steps > 0f
-                ? value.ToString("0.#") + " " + Lex.T("vitals.of") + " " + steps.ToString("0.#")
-                : value.ToString("0.#");
 
         // ---------- Plumbing ----------
 

@@ -107,6 +107,14 @@ namespace Sleeptalker.Sleeper2
         /// (port-audit §7b) — so Backspace clicks exactly what a pointer would.</summary>
         private static void ResolveCancel()
         {
+            // Above-the-table floors first: pause and dice allocation own their own
+            // cancel semantics (pause = the game's own Esc path; die retraction =
+            // the designed Back, decode D11 pending). Never fire Leave under them.
+            if (GameQueries.Paused() || GameQueries.DiceAllocationLive())
+            {
+                Plugin.Log.LogInfo("[Input] Backspace under pause/allocation: no rung yet");
+                return;
+            }
             var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                 .GetFsmBool("Action View?");
             if (actionView != null && actionView.Value)

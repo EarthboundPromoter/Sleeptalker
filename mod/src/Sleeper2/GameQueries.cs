@@ -54,5 +54,49 @@ namespace Sleeptalker.Sleeper2
                 Plugin.Log.LogInfo("[Game] Mouse click: asserted mouse UI mode.");
             }
         }
+
+        // ---------- Interim precedence dials (ride V1 state trap: the location
+        // table owned the keys under pause AND under dice allocation — Action View?
+        // stays true through both. These two dials are the stand-down set until the
+        // ModeModel carries the full CS1 precedence table.) ----------
+
+        private static Transform _pauseCanvas;
+        private static PlayMakerFSM _diceSystem;
+
+        /// <summary>Pause by render truth: the Pause Canvas's effective alpha (the
+        /// canvas object stays in the scene; screens hide by alpha — founding CS2
+        /// rule). Pause outranks every mod surface (CS1 precedence).</summary>
+        public static bool Paused()
+        {
+            if (_pauseCanvas == null)
+            {
+                var go = GameObject.Find("Pause Canvas");
+                _pauseCanvas = go != null ? go.transform : null;
+                if (_pauseCanvas == null) return false;
+            }
+            return Util.AlphaUpTo(_pauseCanvas) >= 0.05f;
+        }
+
+        /// <summary>Dice allocation engaged: the Dice Gamepad System has left its
+        /// Off resting state (live-verified Off at hub idle, §7b). While engaged,
+        /// the game's own dice flow owns the keys; mod tables suspend (excursion,
+        /// not exit). The proper allocation surface arrives with decode D11.</summary>
+        public static bool DiceAllocationLive()
+        {
+            if (_diceSystem == null || _diceSystem.gameObject == null)
+            {
+                _diceSystem = FindFsm("Dice Gamepad System", "Top UI");
+                if (_diceSystem == null) return false;
+            }
+            if (!_diceSystem.gameObject.activeInHierarchy) return false;
+            string state = _diceSystem.ActiveStateName;
+            return !string.IsNullOrEmpty(state) && state != "Off";
+        }
+
+        public static void InvalidateScene()
+        {
+            _pauseCanvas = null;
+            _diceSystem = null;
+        }
     }
 }

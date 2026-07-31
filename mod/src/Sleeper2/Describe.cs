@@ -154,27 +154,32 @@ namespace Sleeptalker.Sleeper2
 
         // ---------- Rendered-text lookups (shared by the card/clock tables) ----------
 
-        /// <summary>Cleaned text of the first active descendant named exactly
-        /// <paramref name="childName"/>; null when absent, inactive, or textless.</summary>
+        /// <summary>Cleaned text of the first RENDERED descendant named exactly
+        /// <paramref name="childName"/>; null when absent, hidden, or textless.
+        /// Rendered = active AND effective alpha up — object presence is not screen
+        /// presence (founding CS2 rule; ride V1 caught the PREDICTIVE block active
+        /// but alpha-hidden until the perk draws it).</summary>
         public static string TextUnder(Transform root, string childName)
         {
             if (root == null) return null;
             foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
             {
                 if (tmp.gameObject.name != childName) continue;
+                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
                 string text = SpeechService.Clean(tmp.text);
                 return string.IsNullOrEmpty(text) ? null : text;
             }
             return null;
         }
 
-        /// <summary>Cleaned text of the first active descendant whose rendered text
-        /// contains <paramref name="fragment"/> (case-sensitive, rendered truth).</summary>
+        /// <summary>Cleaned text of the first RENDERED descendant whose text contains
+        /// <paramref name="fragment"/> (case-sensitive; alpha-honest, as above).</summary>
         public static string TextContaining(Transform root, string fragment)
         {
             if (root == null) return null;
             foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
             {
+                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
                 string text = SpeechService.Clean(tmp.text);
                 if (!string.IsNullOrEmpty(text) && text.Contains(fragment)) return text;
             }
