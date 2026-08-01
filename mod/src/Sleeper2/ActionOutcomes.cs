@@ -38,6 +38,11 @@ namespace Sleeptalker.Sleeper2
             public Transform Card;
             public Transform GroupParent;
             public float Deadline;
+            // Effect deltas stashed AT THE OUTCOME SIGNAL (ride finding: the
+            // effect render tears down before the controller rests — capture
+            // before teardown, the CS1 doctrine). Body word kept for the
+            // rest-time state suffix.
+            public List<(string delta, string body)> Effects;
         }
 
         private static readonly Dictionary<PlayMakerFSM, Pending> Pendings =
@@ -103,6 +108,7 @@ namespace Sleeptalker.Sleeper2
                 Card = card,
                 GroupParent = card != null && card.parent != null ? card.parent.parent : null,
                 Deadline = Time.unscaledTime + 2f,
+                Effects = card != null ? CaptureEffects(card) : null,
             };
         }
 
@@ -149,12 +155,25 @@ namespace Sleeptalker.Sleeper2
             {
                 string narrative = Describe.TextUnder(card, "Description");
                 if (narrative != null) sb.Append(narrative);
-                AppendEffects(card, sb);
             }
             else
             {
                 Plugin.Log.LogInfo("[Outcome] card for '" + p.Name
                     + "' gone and not re-found in the active variant — narrative silent.");
+            }
+            // Deltas from the capture, states from NOW (owner ruling: gain/loss,
+            // then the resulting bar state — bars have settled by rest time).
+            if (p.Effects != null)
+            {
+                foreach (var (delta, bodyWord) in p.Effects)
+                {
+                    if (sb.Length > 0) sb.Append(' ');
+                    sb.Append(delta);
+                    string now = Vitals.CurrentFor(bodyWord);
+                    if (now != null)
+                        sb.Append(", ").Append(Lex.T("outcome.now")).Append(' ').Append(now);
+                    sb.Append('.');
+                }
             }
             foreach (var change in LocationTable.ClockChanges(_clockSnapshot))
             {
@@ -166,12 +185,15 @@ namespace Sleeptalker.Sleeper2
                 SpeechService.Say(sb.ToString(), Priority.Queued, "outcome");
         }
 
-        /// <summary>Rendered effect lines: every visible text on the card leading
-        /// with a +/- glyph run, transcoded (single glyph = direction + body,
-        /// multiple = direction + count + body — the outcome-effect policy over
-        /// the shared GlyphRun parse, per-surface by ruling A9).</summary>
-        private static void AppendEffects(Transform card, System.Text.StringBuilder sb)
+        /// <summary>Rendered effect lines, captured at the outcome signal: every
+        /// visible text on the card leading with a +/- glyph run, transcoded
+        /// (single glyph = direction + body, multiple = direction + count + body
+        /// — the outcome-effect policy over the shared GlyphRun parse, ruling A9).
+        /// Returns (spoken delta, body word) pairs; the body word keys the
+        /// rest-time bar-state suffix.</summary>
+        private static List<(string delta, string body)> CaptureEffects(Transform card)
         {
+            var effects = new List<(string, string)>();
             foreach (var tmp in card.GetComponentsInChildren<TMP_Text>(false))
             {
                 if (Util.AlphaUpTo(tmp.transform, card) < 0.05f) continue;
@@ -181,23 +203,16 @@ namespace Sleeptalker.Sleeper2
                 int body = Util.GlyphRun(text, out int plus, out int minus);
                 string rest = text.Substring(body).Trim();
                 if (rest.Length == 0) continue;
-                if (sb.Length > 0) sb.Append(' ');
+                string delta;
                 if (plus > 0 && minus == 0)
-                    sb.Append(Lex.T("glyph.plus"))
-                      .Append(plus > 1 ? " " + plus : "").Append(' ').Append(rest);
+                    delta = Lex.T("glyph.plus") + (plus > 1 ? " " + plus : "") + " " + rest;
                 else if (minus > 0 && plus == 0)
-                    sb.Append(Lex.T("glyph.minus"))
-                      .Append(minus > 1 ? " " + minus : "").Append(' ').Append(rest);
+                    delta = Lex.T("glyph.minus") + (minus > 1 ? " " + minus : "") + " " + rest;
                 else
-                    sb.Append(text); // mixed run: spoken raw, never guessed
-                // Gain/loss, THEN the resulting bar state (owner ruling): the
-                // matching channel's live "x of y", keyed by the effect body's
-                // own rendered word.
-                string now = Vitals.CurrentFor(rest);
-                if (now != null)
-                    sb.Append(", ").Append(Lex.T("outcome.now")).Append(' ').Append(now);
-                sb.Append('.');
+                    delta = text; // mixed run: spoken raw, never guessed
+                effects.Add((delta, rest));
             }
+            return effects;
         }
 
         private static Transform ReFind(Transform groupParent, string name)

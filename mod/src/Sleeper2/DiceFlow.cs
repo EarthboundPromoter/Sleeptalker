@@ -62,7 +62,11 @@ namespace Sleeptalker.Sleeper2
             {
                 if (!IsActionController(fsm)) return;
                 var card = fsm.transform.parent;
-                var sb = new System.Text.StringBuilder(Lex.T("dice.slotted"));
+                // What got slotted (ride finding: cryo payments spoke "Die
+                // slotted"): a die engages the dice systems; an item/cryo payment
+                // does not — the engaged-systems dial is the discriminator.
+                var sb = new System.Text.StringBuilder(Lex.T(
+                    GameQueries.DiceAllocationLive() ? "dice.slotted" : "dice.slotted-item"));
                 if (card != null)
                 {
                     // The odds render in the band/bucket anatomy the dialogue tier

@@ -79,6 +79,7 @@ namespace Sleeptalker.Scaffold
                 { "dice.picker-closed", "Picker closed." },
                 { "dice.refused", "Die unavailable." },
                 { "dice.slotted", "Die slotted." },
+                { "dice.slotted-item", "Slotted." },
                 { "dice.returned", "Die returned." },
                 { "dice.die", "Die" },
                 { "dice.die-lower", "die" },
