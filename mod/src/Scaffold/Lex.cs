@@ -94,6 +94,10 @@ namespace Sleeptalker.Scaffold
                 { "topbar.row.buttons", "Buttons." },
                 { "topbar.row.dice", "Dice." },
                 { "topbar.row-empty", "Nothing here." },
+                // Action resolution
+                { "outcome.positive", "positive outcome." },
+                { "outcome.neutral", "neutral outcome." },
+                { "outcome.negative", "negative outcome." },
                 // Modes (F1)
                 { "mode.title", "Title screen" },
                 { "mode.pause", "Pause menu" },

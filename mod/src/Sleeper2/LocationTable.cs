@@ -427,11 +427,40 @@ namespace Sleeptalker.Sleeper2
             }
         }
 
-        /// <summary>Progress via the shared clock-class query (GameQueries.ClockFsm /
-        /// ClockProgress — the ClockValue variable IS the class; ride V1 rulings:
-        /// exact variable, never a name key, never a contains-guess).</summary>
+        /// <summary>Progress via the shared clock-class query (render-read UICircle,
+        /// owner ruling ride V3).</summary>
         private static string ClockProgress(Transform clock)
             => GameQueries.ClockProgress(GameQueries.ClockFsm(clock));
+
+        // ---------- Outcome pipeline hooks (DiceFlow's resolution reader) ----------
+
+        /// <summary>Commit-time clock snapshot (CS1 SnapshotForDiff idiom): the open
+        /// group's clock rows and their rendered progress.</summary>
+        internal static Dictionary<Transform, string> ClockSnapshot()
+        {
+            var snapshot = new Dictionary<Transform, string>();
+            _builtAt = -1f; // fresh rows
+            foreach (var clock in Clocks())
+                snapshot[clock] = ClockProgress(clock) ?? "";
+            return snapshot;
+        }
+
+        /// <summary>Post-outcome clock changes vs a commit-time snapshot: one
+        /// "name, x of y" line per clock whose rendered progress moved (new clocks
+        /// included — a resolution can reveal one).</summary>
+        internal static List<string> ClockChanges(Dictionary<Transform, string> snapshot)
+        {
+            var changes = new List<string>();
+            _builtAt = -1f; // fresh rows
+            foreach (var clock in Clocks())
+            {
+                string now = ClockProgress(clock) ?? "";
+                if (now.Length == 0) continue;
+                if (snapshot == null || !snapshot.TryGetValue(clock, out string was) || was != now)
+                    changes.Add(ClockName(clock) + ", " + now + ".");
+            }
+            return changes;
+        }
 
         // ---------- Plumbing ----------
 

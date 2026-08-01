@@ -93,6 +93,7 @@ namespace Sleeptalker
             ZoneTable.Init();
             DiceFlow.Init();
             TopBarTable.Init();
+            ActionOutcomes.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -108,6 +109,7 @@ namespace Sleeptalker
             ZoneTable.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();
+            ActionOutcomes.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
