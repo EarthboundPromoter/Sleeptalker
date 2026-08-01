@@ -134,6 +134,21 @@ namespace Sleeptalker.Sleeper2
                 SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
                 return;
             }
+            // Rig rooms (ride V1): the designed exit is the top bar's Ship toggle —
+            // RIG in, EXPLORE out (one object, dynamic label, glyph B). The RIG view
+            // global stays false in this state, so the zone container is the dial.
+            if (StationAtlas.InRigContainer())
+            {
+                var ship = GameObject.Find("Letterbox Canvas/Top UI/Ship and Map Buttons/Ship UI/Button");
+                if (ship != null)
+                {
+                    Navigator.Click(ship);
+                    return;
+                }
+                Plugin.Log.LogWarning("[Input] rig container but no Ship UI button — capture needed");
+                SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
+                return;
+            }
             // Other modes: no cancel rung yet (skeleton) — log, stay silent.
             Plugin.Log.LogInfo("[Input] Backspace: no cancel path in this mode yet");
         }
