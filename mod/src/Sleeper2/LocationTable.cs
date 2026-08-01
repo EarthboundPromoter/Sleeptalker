@@ -316,14 +316,45 @@ namespace Sleeptalker.Sleeper2
             }
         }
 
-        /// <summary>The merged requirements cell (CS1 ruling): the take-kind first —
-        /// die slots are pure structure (a Gamepad Dice Slot child), never a blanket
-        /// phrase for non-die cards — then the rendered skill + modifier tier.</summary>
+        /// <summary>The merged requirements cell (CS1 ruling, and CS1's blanket
+        /// "takes a die" bug NOT re-imported — owner catch, cantine ride: the
+        /// Gamepad Dice Slot has TWO variants (D11): the dice picker slot AND the
+        /// item-cost slot (Check Amount/Slot Item — cryo/item payment). The
+        /// take-kind is the slot FSM's own state vocabulary, and a non-die cost
+        /// speaks its RENDERED amount; FSM variables back it only when render
+        /// fails, loudly (owner law: render is the source of truth, backing
+        /// second). Then the rendered skill + modifier tier.</summary>
         private static string RequiresCell(Transform card)
         {
             var parts = new List<string>();
-            if (FindDeep(card, "Gamepad Dice Slot") != null)
-                parts.Add(Lex.T("loc.takes-die"));
+            var slot = FindDeep(card, "Gamepad Dice Slot");
+            if (slot != null && slot.gameObject.activeInHierarchy)
+            {
+                var slotFsm = slot.GetComponent<PlayMakerFSM>();
+                if (HasState(slotFsm, "Select Dice"))
+                    parts.Add(Lex.T("loc.takes-die"));
+                else if (HasState(slotFsm, "Check Amount") || HasState(slotFsm, "Slot Item"))
+                {
+                    string cost = Describe.TextUnder(card, "Cost Label")
+                               ?? FirstVisibleText(slot);
+                    if (cost == null && slotFsm != null)
+                    {
+                        // Backing lane: the slot's own cost variable, flagged.
+                        var costInt = slotFsm.FsmVariables.GetFsmInt("Item Cost");
+                        var costFloat = slotFsm.FsmVariables.GetFsmFloat("Item Cost");
+                        if (costInt != null)
+                            cost = Lex.T("loc.costs") + " " + costInt.Value;
+                        else if (costFloat != null)
+                            cost = Lex.T("loc.costs") + " " + costFloat.Value.ToString("0.#");
+                        LogOnce("[Location] item slot on " + ActionName(card)
+                            + " renders no cost text — variable backing spoken, capture needed");
+                    }
+                    if (cost != null) parts.Add(cost);
+                }
+                else
+                    LogOnce("[Location] unknown slot variant on " + ActionName(card)
+                        + " — no take-kind spoken, capture needed");
+            }
             string skill = Describe.TextUnder(card, "Skill");
             if (skill != null)
             {
@@ -334,6 +365,28 @@ namespace Sleeptalker.Sleeper2
                 parts.Add(tier != null ? skill + " " + tier : skill);
             }
             return parts.Count > 0 ? string.Join(", ", parts.ToArray()) : null;
+        }
+
+        private static bool HasState(PlayMakerFSM fsm, string stateName)
+        {
+            if (fsm == null) return false;
+            var states = fsm.FsmStates;
+            if (states == null) return false;
+            foreach (var s in states)
+                if (s.Name == stateName) return true;
+            return false;
+        }
+
+        /// <summary>First effectively-visible rendered text in a subtree.</summary>
+        private static string FirstVisibleText(Transform root)
+        {
+            foreach (var tmp in root.GetComponentsInChildren<TMPro.TMP_Text>(false))
+            {
+                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (!string.IsNullOrEmpty(text)) return text;
+            }
+            return null;
         }
 
         private static string RiskCell(Transform card)

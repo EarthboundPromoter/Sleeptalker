@@ -98,6 +98,9 @@ namespace Sleeptalker.Scaffold
                 { "outcome.positive", "positive outcome." },
                 { "outcome.neutral", "neutral outcome." },
                 { "outcome.negative", "negative outcome." },
+                { "glyph.plus", "plus" },
+                { "glyph.minus", "minus" },
+                { "loc.costs", "costs" },
                 // Modes (F1)
                 { "mode.title", "Title screen" },
                 { "mode.pause", "Pause menu" },

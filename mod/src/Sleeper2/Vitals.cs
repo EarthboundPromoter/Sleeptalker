@@ -161,6 +161,17 @@ namespace Sleeptalker.Sleeper2
             }
             if (value == ch.LastSpoken.Value) return;
 
+            // Two-lane rule (CS1 ResourceWatch carried): while a resolution is in
+            // flight the outcome lane speaks the card's rendered deltas — this
+            // base lane caches silently instead of double-speaking.
+            if (ActionOutcomes.ResolutionInFlight)
+            {
+                ch.LastSpoken = value;
+                Plugin.Log.LogInfo("[Vitals] stood down (outcome lane): "
+                    + NameOf(ch, fsm) + " -> " + value);
+                return;
+            }
+
             string direction = Lex.T(value > ch.LastSpoken.Value ? "vitals.up" : "vitals.down");
             ch.LastSpoken = value;
             SpeechService.Say(NameOf(ch, fsm) + " " + direction + ", "
