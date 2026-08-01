@@ -99,6 +99,12 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
 
+            // Direct keys (owner ruling 2026-07-31): M = map, G = rig toggle —
+            // the same native clicks the V-table rows fire, scoped to the floors
+            // where the buttons render (dead elsewhere, KeyScope idiom).
+            if (Input.GetKeyDown(KeyCode.M)) { MapKey(); return; }
+            if (Input.GetKeyDown(KeyCode.G)) { RigKey(); return; }
+
             if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
             if (Input.GetKeyDown(KeyCode.F1)) { SpeakHelp(); return; }
@@ -165,7 +171,7 @@ namespace Sleeptalker.Sleeper2
             // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
-            KeyCode.V, KeyCode.Z, KeyCode.F1, KeyCode.F3,
+            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
         };
@@ -175,6 +181,29 @@ namespace Sleeptalker.Sleeper2
             foreach (var key in ModKeys)
                 if (Input.GetKeyDown(key)) return true;
             return false;
+        }
+
+        private static void MapKey()
+        {
+            var mode = ModeModel.Current();
+            if (mode == Mode.Map) { GameQueries.MapBack(); return; } // toggle out
+            if (mode != Mode.Station && mode != Mode.RigRooms && mode != Mode.ActionView)
+                return; // dead out of scope
+            var button = GameObject.Find(
+                "Letterbox Canvas/Top UI/Ship and Map Buttons/Map UI/Button");
+            if (button != null) { Navigator.Click(button); return; }
+            Plugin.Log.LogWarning("[Input] M: no Map button on this floor");
+            SpeechService.Say(Lex.T("map.unavailable"), Priority.Immediate, "nav");
+        }
+
+        private static void RigKey()
+        {
+            var mode = ModeModel.Current();
+            if (mode != Mode.Station && mode != Mode.RigRooms) return; // dead out of scope
+            var ship = GameQueries.ShipToggleButton();
+            if (ship != null) { Navigator.Click(ship); return; }
+            Plugin.Log.LogWarning("[Input] G: no Ship toggle on this floor");
+            SpeechService.Say(Lex.T("rig.unavailable"), Priority.Immediate, "nav");
         }
 
         /// <summary>F1 — contextual help (CS1 KeyScope idiom, minimal form): the
