@@ -76,6 +76,21 @@ namespace Sleeptalker.Sleeper2
                     return;
             }
 
+            // Pause options review (CS1 OptionsReview port, D7): while the
+            // Options Menu panel renders, the review owns arrows + Enter —
+            // Up/Down rows, Left/Right mutate natively, Enter presses Back.
+            // Esc stays the game's own back-out, one level at a time.
+            if (OptionsReview.IsActive())
+            {
+                if (Input.GetKeyDown(KeyCode.DownArrow)) { OptionsReview.Review(1); return; }
+                if (Input.GetKeyDown(KeyCode.UpArrow)) { OptionsReview.Review(-1); return; }
+                if (Input.GetKeyDown(KeyCode.RightArrow)) { OptionsReview.Adjust(1); return; }
+                if (Input.GetKeyDown(KeyCode.LeftArrow)) { OptionsReview.Adjust(-1); return; }
+                if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    && OptionsReview.Activate())
+                    return;
+            }
+
             // The top-bar V table: an excursion above the zone/location tables
             // (owner ruling 2026-07-31 — the whole bar walkable, buttons included).
             if (TopBarTable.HandleKeys()) return;
@@ -247,7 +262,9 @@ namespace Sleeptalker.Sleeper2
                 case Mode.DiceAllocation: keys = Lex.T("help.dice"); break;
                 case Mode.Map: keys = Lex.T("help.map"); break;
                 case Mode.DriveLog: keys = Lex.T("help.journal"); break;
-                case Mode.Pause: keys = Lex.T("help.native"); break;
+                case Mode.Pause:
+                    keys = Lex.T(OptionsReview.IsActive() ? "help.options" : "help.native");
+                    break;
                 default: keys = Lex.T("help.native"); break;
             }
             SpeechService.Say(Lex.T("mode." + mode.ToString().ToLowerInvariant())

@@ -143,6 +143,11 @@ namespace Sleeptalker.Scaffold
                 { "help.dice", "Arrows move between dice, Enter picks, Backspace takes back or closes." },
                 { "help.map", "Arrows walk the markers, Left and Right browse facets, Space full row, Enter commits travel, M or Backspace closes the map." },
                 { "help.native", "Arrows and Enter, game controls." },
+                // Options review
+                { "options.intro", "Options. Up and Down for settings, Left and Right to change." },
+                { "options.setting", "setting" },
+                { "options.changed", "changed" },
+                { "help.options", "Up and Down walk settings, Left and Right change them, Enter presses Back, Escape backs out." },
                 { "help.journal", "Up and Down walk drives, Left and Right browse cells, Enter performs the cell, Slash swaps tabs, J or Backspace closes." },
                 // Drive journal
                 { "mode.drivelog", "Drive log" },
