@@ -200,6 +200,26 @@ namespace Sleeptalker.Sleeper2
                 + Format(value, ch.Max(fsm)) + ".", Priority.Queued, "vitals");
         }
 
+        /// <summary>The current bar state for a rendered effect word ("ENERGY",
+        /// "13 CRYO" — the card's own vocabulary): the matching channel's live
+        /// "x of y". Null when no channel matches or its bar is gone. Feeds the
+        /// outcome composition (owner ruling: gain/loss, then the resulting
+        /// state).</summary>
+        public static string CurrentFor(string renderedWord)
+        {
+            if (string.IsNullOrEmpty(renderedWord)) return null;
+            string upper = renderedWord.ToUpperInvariant();
+            foreach (var ch in Channels)
+            {
+                if (ch.Name == null) continue; // per-instance channels (crew) opt out
+                if (!upper.Contains(ch.Name.ToUpperInvariant())) continue;
+                var fsm = ch.LiveFsm;
+                if (fsm == null || !fsm.gameObject.activeInHierarchy) continue;
+                return Format(ch.Value(fsm), ch.Max(fsm));
+            }
+            return null;
+        }
+
         /// <summary>Current readout of every channel with a live bar — the vitals
         /// readout and the top-bar table speak exactly this list.</summary>
         public static List<string> Read()

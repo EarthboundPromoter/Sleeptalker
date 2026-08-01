@@ -190,6 +190,12 @@ namespace Sleeptalker.Sleeper2
                       .Append(minus > 1 ? " " + minus : "").Append(' ').Append(rest);
                 else
                     sb.Append(text); // mixed run: spoken raw, never guessed
+                // Gain/loss, THEN the resulting bar state (owner ruling): the
+                // matching channel's live "x of y", keyed by the effect body's
+                // own rendered word.
+                string now = Vitals.CurrentFor(rest);
+                if (now != null)
+                    sb.Append(", ").Append(Lex.T("outcome.now")).Append(' ').Append(now);
                 sb.Append('.');
             }
         }
