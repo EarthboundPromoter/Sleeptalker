@@ -12,6 +12,7 @@ namespace Sleeptalker.Sleeper2
         Conversation,
         DiceAllocation,
         Map,
+        DriveLog,
         CycleTransition,
         ActionView,
         Travel,
@@ -64,6 +65,7 @@ namespace Sleeptalker.Sleeper2
             if (ConversationEvents.ConversationActive) return Mode.Conversation;
             if (GameQueries.DiceAllocationLive()) return Mode.DiceAllocation;
             if (GameQueries.MapOpen()) return Mode.Map;
+            if (JournalTable.WindowOpen()) return Mode.DriveLog;
             if (GameQueries.CycleTransitioning()) return Mode.CycleTransition;
             if (ActionViewUp()) return Mode.ActionView;
             if (GameQueries.TravelScene()) return Mode.Travel;

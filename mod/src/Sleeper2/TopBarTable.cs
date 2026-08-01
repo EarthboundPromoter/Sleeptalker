@@ -84,7 +84,7 @@ namespace Sleeptalker.Sleeper2
                 case RowDice:
                     for (int n = 1; n <= 5; n++)
                     {
-                        string line = DieLine(n);
+                        string line = DiceFlow.DieLine(n);
                         if (line != null) CellCache.Add(new Cell { Speech = line });
                     }
                     break;
@@ -186,26 +186,6 @@ namespace Sleeptalker.Sleeper2
             Entered = false;
             if (announce)
                 SpeechService.Say(Lex.T("topbar.closed"), Priority.Immediate, "query");
-        }
-
-        /// <summary>Per-die row from the tray's own Die FSM (DiceValue face; 9 IS
-        /// the glitched render; literal Used/Broken states — D11 §6).</summary>
-        private static string DieLine(int n)
-        {
-            var go = GameObject.Find("Letterbox Canvas/Top UI/Dice UI/Dice Slot " + n + "/Die");
-            if (go == null || !go.activeInHierarchy) return null;
-            var fsm = go.GetComponent<PlayMakerFSM>();
-            if (fsm == null) return null;
-            var sb = new System.Text.StringBuilder(Lex.T("dice.die")).Append(' ').Append(n);
-            string state = fsm.ActiveStateName ?? "";
-            var value = fsm.FsmVariables.GetFsmFloat("DiceValue");
-            if (state == "Used") sb.Append(", ").Append(Lex.T("dice.spent"));
-            else if (state == "Broken") sb.Append(", ").Append(Lex.T("dice.broken"));
-            else if (value != null)
-                sb.Append(", ").Append(value.Value == 9f
-                    ? Lex.T("dice.glitched") : value.Value.ToString("0"));
-            sb.Append('.');
-            return sb.ToString();
         }
 
         private static string ButtonLine(GameObject button)

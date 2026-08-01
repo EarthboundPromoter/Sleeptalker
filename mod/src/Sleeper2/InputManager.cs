@@ -80,6 +80,17 @@ namespace Sleeptalker.Sleeper2
             // (owner ruling 2026-07-31 — the whole bar walkable, buttons included).
             if (TopBarTable.HandleKeys()) return;
 
+            // Drive log: J toggles (the Drive Log Button FSM's own Open, both
+            // directions); while open, the journal table owns the keys.
+            if (Input.GetKeyDown(KeyCode.J))
+            {
+                var mode = ModeModel.Current();
+                if (mode == Mode.DriveLog || mode == Mode.Station
+                    || mode == Mode.RigRooms || mode == Mode.ActionView)
+                { JournalTable.Toggle(); return; }
+            }
+            if (ModeModel.Current() == Mode.DriveLog && JournalTable.HandleKeys()) return;
+
             // Action view: the location table owns the keys — the D4 stacked grid
             // (mode-gated by the ModeModel).
             if (LocationTable.Active() && LocationTable.HandleKeys()) return;
@@ -130,6 +141,10 @@ namespace Sleeptalker.Sleeper2
                     GameQueries.MapBack();
                     return;
 
+                case Mode.DriveLog:
+                    JournalTable.Toggle(); // the button FSM's Open, both directions
+                    return;
+
                 case Mode.DiceAllocation:
                 case Mode.ActionView:
                     // Slot rungs FIRST on both floors (ride finding: an ITEM-cost
@@ -171,7 +186,8 @@ namespace Sleeptalker.Sleeper2
             // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
-            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.Z, KeyCode.F1, KeyCode.F3,
+            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.Slash,
+            KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
         };
@@ -224,6 +240,7 @@ namespace Sleeptalker.Sleeper2
                 case Mode.Conversation: keys = Lex.T("help.conversation"); break;
                 case Mode.DiceAllocation: keys = Lex.T("help.dice"); break;
                 case Mode.Map: keys = Lex.T("help.map"); break;
+                case Mode.DriveLog: keys = Lex.T("help.journal"); break;
                 case Mode.Pause: keys = Lex.T("help.native"); break;
                 default: keys = Lex.T("help.native"); break;
             }

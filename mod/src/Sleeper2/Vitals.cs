@@ -183,13 +183,14 @@ namespace Sleeptalker.Sleeper2
             }
             if (value == ch.LastSpoken.Value) return;
 
-            // Two-lane rule (CS1 ResourceWatch carried): while a resolution is in
-            // flight the outcome lane speaks the card's rendered deltas — this
-            // base lane caches silently instead of double-speaking.
-            if (ActionOutcomes.ResolutionInFlight)
+            // Two-lane rule (CS1 ResourceWatch carried): while a resolution or a
+            // cycle transition is in flight, the interaction lane speaks (outcome
+            // deltas / the wake summary's absolutes) — this base lane caches
+            // silently instead of double-speaking.
+            if (ActionOutcomes.ResolutionInFlight || CycleGate.TransitionInFlight)
             {
                 ch.LastSpoken = value;
-                Plugin.Log.LogInfo("[Vitals] stood down (outcome lane): "
+                Plugin.Log.LogInfo("[Vitals] stood down (interaction lane): "
                     + NameOf(ch, fsm) + " -> " + value);
                 return;
             }

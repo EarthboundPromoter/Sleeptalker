@@ -146,6 +146,43 @@ namespace Sleeptalker.Sleeper2
             return sb.ToString();
         }
 
+        /// <summary>Tray die read by slot number — shared by the top-bar table and
+        /// the cycle summary (render lane: DiceValue face, 9 = glitched, literal
+        /// Used/Broken states).</summary>
+        public static string DieLine(int n)
+        {
+            return ReadDieAt(
+                "Letterbox Canvas/Top UI/Dice UI/Dice Slot " + n + "/Die",
+                Lex.T("dice.die") + " " + n);
+        }
+
+        /// <summary>Crew die read (D11 paths).</summary>
+        public static string CrewDieLine(int member, int slot)
+        {
+            return ReadDieAt(
+                "Crew UI/Crew Member " + member + "/Display/Crew Dice/Crew - Dice Slot "
+                    + slot + "/Die",
+                Lex.T("dice.crew") + " " + member + " " + Lex.T("dice.die-lower") + " " + slot);
+        }
+
+        private static string ReadDieAt(string path, string label)
+        {
+            var go = GameObject.Find(path);
+            if (go == null || !go.activeInHierarchy) return null;
+            var fsm = go.GetComponent<PlayMakerFSM>();
+            if (fsm == null) return null;
+            var sb = new System.Text.StringBuilder(label);
+            string state = fsm.ActiveStateName ?? "";
+            var value = fsm.FsmVariables.GetFsmFloat("DiceValue");
+            if (state == "Used") sb.Append(", ").Append(Lex.T("dice.spent"));
+            else if (state == "Broken") sb.Append(", ").Append(Lex.T("dice.broken"));
+            else if (value != null)
+                sb.Append(", ").Append(value.Value == 9f
+                    ? Lex.T("dice.glitched") : value.Value.ToString("0"));
+            sb.Append('.');
+            return sb.ToString();
+        }
+
         private static string CrewPrefixOf(Transform t)
         {
             for (var cur = t; cur != null; cur = cur.parent)

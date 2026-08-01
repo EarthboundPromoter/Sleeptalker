@@ -82,6 +82,7 @@ namespace Sleeptalker
                 StationAtlas.InvalidateScene();
                 GameQueries.InvalidateScene();
                 ZoneTable.OnSceneChanged();
+                JournalTable.InvalidateScene();
             };
 
             _input = new InputManager();
@@ -94,6 +95,7 @@ namespace Sleeptalker
             DiceFlow.Init();
             TopBarTable.Init();
             ActionOutcomes.Init();
+            CycleGate.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -110,6 +112,7 @@ namespace Sleeptalker
             LocationTable.Tick();
             TopBarTable.Tick();
             ActionOutcomes.Tick();
+            JournalTable.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
