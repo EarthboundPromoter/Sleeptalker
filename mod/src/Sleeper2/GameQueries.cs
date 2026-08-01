@@ -281,34 +281,86 @@ namespace Sleeptalker.Sleeper2
             return null;
         }
 
-        /// <summary>"x of y" from a clock-class FSM: value = its own ClockValue,
-        /// steps = the leading number of its owner name. Bare value (logged once)
-        /// when the name carries no count.</summary>
+        /// <summary>"x of y segments" — from the RENDER (owner ruling, ride V3:
+        /// stop reading clock variables, they lie — ClockValue sat 0 on drawn
+        /// clocks). The clock element draws with a UICircle component on the same
+        /// GameObject as its FSM (live-verified; the glitch dials share the
+        /// idiom): its Progress IS the drawn fill. X = the circle's progress
+        /// (fraction × steps, or the raw count if it stores one), Y = the leading
+        /// number of the clock's own name. The FSM variable path survives only as
+        /// a logged fallback for a circle-less clock.</summary>
         public static string ClockProgress(PlayMakerFSM clockFsm)
         {
             if (clockFsm == null) return null;
+            float steps = Util.LeadingInt(clockFsm.gameObject.name);
+
+            float? drawn = UICircleProgress(clockFsm.gameObject);
             float value;
-            var f = clockFsm.FsmVariables.GetFsmFloat("ClockValue");
-            if (f != null) value = f.Value;
+            if (drawn.HasValue)
+            {
+                // Fraction (0..1) scales to steps; a raw count passes through.
+                value = drawn.Value <= 1.0001f && steps > 0f
+                    ? Mathf.Round(drawn.Value * steps)
+                    : Mathf.Round(drawn.Value);
+                if (value < 0f) value = 0f;
+            }
             else
             {
+                var f = clockFsm.FsmVariables.GetFsmFloat("ClockValue");
                 var i = clockFsm.FsmVariables.GetFsmInt("ClockValue");
-                if (i == null) return null;
-                value = i.Value;
+                if (f == null && i == null) return null;
+                value = f != null ? f.Value : i.Value;
+                LogOnceGame("[Game] clock \"" + clockFsm.gameObject.name
+                    + "\" has no UICircle — spoke ClockValue fallback (verify vs render)");
             }
-            float steps = Util.LeadingInt(clockFsm.gameObject.name);
+
             if (steps <= 0f)
             {
-                if (_stepless.Add(clockFsm.gameObject.name))
-                    Plugin.Log.LogWarning("[Game] clock FSM \"" + clockFsm.gameObject.name
-                        + "\" carries no step count in its name — bare value spoken.");
-                return value.ToString("0.#");
+                LogOnceGame("[Game] clock \"" + clockFsm.gameObject.name
+                    + "\" carries no step count in its name — bare value spoken.");
+                return value.ToString("0");
             }
-            return value.ToString("0.#") + " " + Scaffold.Lex.T("vitals.of")
+            return value.ToString("0") + " " + Scaffold.Lex.T("vitals.of")
                 + " " + steps.ToString("0");
         }
 
-        private static readonly System.Collections.Generic.HashSet<string> _stepless =
+        /// <summary>Reflection read of the UICircle's drawn progress (property or
+        /// field, either casing) — the render value itself. Null when the object
+        /// draws with something else. Raw values logged once per clock for the
+        /// fraction-vs-count calibration.</summary>
+        private static float? UICircleProgress(GameObject go)
+        {
+            foreach (var component in go.GetComponents<Component>())
+            {
+                if (component == null) continue;
+                var type = component.GetType();
+                if (type.Name != "UICircle") continue;
+                var prop = type.GetProperty("Progress") ?? type.GetProperty("progress");
+                if (prop != null && prop.PropertyType == typeof(float))
+                {
+                    float raw = (float)prop.GetValue(component, null);
+                    LogOnceGame("[Game] clock render \"" + go.name + "\" UICircle=" + raw);
+                    return raw;
+                }
+                var field = type.GetField("Progress") ?? type.GetField("progress");
+                if (field != null && field.FieldType == typeof(float))
+                {
+                    float raw = (float)field.GetValue(component);
+                    LogOnceGame("[Game] clock render \"" + go.name + "\" UICircle=" + raw);
+                    return raw;
+                }
+                LogOnceGame("[Game] UICircle on \"" + go.name
+                    + "\" exposes no Progress member — capture needed");
+            }
+            return null;
+        }
+
+        private static readonly System.Collections.Generic.HashSet<string> _gameLogged =
             new System.Collections.Generic.HashSet<string>();
+
+        private static void LogOnceGame(string line)
+        {
+            if (_gameLogged.Add(line)) Plugin.Log.LogInfo(line);
+        }
     }
 }
