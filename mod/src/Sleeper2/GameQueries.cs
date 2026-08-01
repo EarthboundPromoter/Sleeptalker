@@ -250,6 +250,51 @@ namespace Sleeptalker.Sleeper2
             _cycleFsm = null;
             _mainMenuFsm = null;
             _mainMenuChecked = _pauseChecked = _mapChecked = _shipChecked = _cycleChecked = false;
+            _focusFsm = null;
+            _focusChecked = false;
+        }
+
+        // ---------- Camera scroll accumulator (the CS1 map-table contract,
+        // rebuilt on the live sweep 2026-07-31: hover never drove the camera —
+        // the selector follows the CAMERA, so table follow writes the game's own
+        // scroll input accumulator, Focus Z (+ damped follower + global), exactly
+        // the value class CS1's table wrote. Supersedes the S3 never-write ruling
+        // by owner direction; flagged in the reply for veto.) ----------
+
+        private static PlayMakerFSM _focusFsm;
+        private static bool _focusChecked;
+
+        private static PlayMakerFSM FocusFsm()
+        {
+            if (!_focusChecked)
+            {
+                _focusFsm = FindFsm("Focus", "Focus Gimbal");
+                _focusChecked = true;
+            }
+            return _focusFsm != null && _focusFsm.gameObject != null ? _focusFsm : null;
+        }
+
+        public static float? FocusZ()
+        {
+            var fsm = FocusFsm();
+            var v = fsm != null ? fsm.FsmVariables.GetFsmFloat("Focus Z") : null;
+            return v != null ? v.Value : (float?)null;
+        }
+
+        public static void SetFocusZ(float value)
+        {
+            var fsm = FocusFsm();
+            if (fsm == null) return;
+            var min = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Min Rotation");
+            var max = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Max Rotation");
+            value = Mathf.Clamp(value, min != null ? min.Value : -1400f,
+                                       max != null ? max.Value : 3600f);
+            var local = fsm.FsmVariables.GetFsmFloat("Focus Z");
+            var damped = fsm.FsmVariables.GetFsmFloat("Damped Z");
+            var global = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Focus Z Global");
+            if (local != null) local.Value = value;
+            if (damped != null) damped.Value = value;
+            if (global != null) global.Value = value;
         }
 
         // ---------- Clocks (the ClockValue FSM class) ----------

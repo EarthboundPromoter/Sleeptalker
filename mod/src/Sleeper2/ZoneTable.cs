@@ -104,6 +104,20 @@ namespace Sleeptalker.Sleeper2
                 _hovered = button;
             };
             Table.Detail = (row, col) => Table.Say(FullReport(row));
+            // Camera follow (CS1 map-table contract, live-sweep rebuild): write
+            // only when the row ACTUALLY changed, post-speech (AfterRowSpeech is
+            // the engine's documented camera hook). The follow is closed-loop:
+            // nudge the scroll accumulator toward the node until the game's own
+            // selector picks it (the sweep's ground truth), bounded + timed.
+            Table.AfterRowSpeech = (prev, row) =>
+            {
+                if (row == prev) return;
+                var nodes = Nodes();
+                if (row < 0 || row >= nodes.Count) { _followTarget = null; return; }
+                _followTarget = nodes[row];
+                _followUntil = Time.unscaledTime + 1.5f;
+            };
+
             Table.Commit = (row, col) =>
             {
                 var nodes = Nodes();
@@ -158,6 +172,7 @@ namespace Sleeptalker.Sleeper2
         /// scene goes away.</summary>
         public static void Tick()
         {
+            FollowTick();
             if (!_entered) return;
             var mode = ModeModel.Current();
             bool onZoneFloor = mode == Mode.Station || mode == Mode.RigRooms;
@@ -173,9 +188,46 @@ namespace Sleeptalker.Sleeper2
         /// <summary>Scene teardown: full exit (containers are gone).</summary>
         public static void OnSceneChanged() => ExitTable();
 
+        // ---------- Closed-loop camera follow ----------
+
+        private static StationAtlas.Node _followTarget;
+        private static float _followUntil = -1f;
+
+        /// <summary>Runs from Tick on the zone floors: steps Focus Z toward the
+        /// target node until the game's own selector picks it (selector = the
+        /// ground truth the sweep validated). Direction from the map-axis angle
+        /// (Focus Z rises as the angle falls — sweep 2026-07-31). Stops on pick,
+        /// bound, timeout (logged), or the floor changing.</summary>
+        private static void FollowTick()
+        {
+            if (_followTarget == null) return;
+            var mode = ModeModel.Current();
+            if (mode != Mode.Station && mode != Mode.RigRooms) { _followTarget = null; return; }
+            if (Time.unscaledTime > _followUntil)
+            {
+                Plugin.Log.LogInfo("[Zone] camera follow timed out short of "
+                    + _followTarget.Name + " — capture");
+                _followTarget = null;
+                return;
+            }
+            var closest = StationAtlas.ClosestButton();
+            if (closest == _followTarget.Button) { _followTarget = null; return; }
+            var z = GameQueries.FocusZ();
+            if (z == null) { _followTarget = null; return; }
+            // Which way? The selector's current pick tells us where we are on the
+            // axis; the angle ordering (descending = rising Focus Z) gives the sign.
+            var nodes = Nodes();
+            float closestAz = _followTarget.Azimuth;
+            foreach (var n in nodes)
+                if (n.Button == closest) { closestAz = n.Azimuth; break; }
+            float dir = _followTarget.Azimuth < closestAz ? 1f : -1f;
+            GameQueries.SetFocusZ(z.Value + dir * 120f);
+        }
+
         private static void ExitTable()
         {
             _entered = false;
+            _followTarget = null;
             Table.Reset();
             if (_hovered != null)
             {
@@ -241,6 +293,26 @@ namespace Sleeptalker.Sleeper2
                 });
             }
 
+            // The display's clock cards (owner report: the visible rig clocks were
+            // never rows). RENDERED ones only — the ON and OFF again Switches hide
+            // undiscovered clocks (D9), and the render test sees that.
+            var clocksHub = display.transform.Find("Clocks HUB");
+            if (clocksHub != null && clocksHub.gameObject.activeInHierarchy)
+            {
+                foreach (Transform card in clocksHub)
+                {
+                    if (!Util.RenderedUp(card)) continue;
+                    var clockFsm = GameQueries.ClockFsm(card);
+                    if (clockFsm == null) continue;
+                    var c = card;
+                    _ops.Add(new OpRow
+                    {
+                        Target = null, // display-only, like location clock rows
+                        Speech = () => ClockCardSpeech(c),
+                    });
+                }
+            }
+
             var crew = display.transform.Find("Crew Assignment/Display");
             if (crew != null && crew.gameObject.activeInHierarchy)
             {
@@ -283,6 +355,18 @@ namespace Sleeptalker.Sleeper2
             }
             sb.Append('.');
             return sb.ToString();
+        }
+
+        /// <summary>Rig clock card row: "Name, x of y." + narrative (the fused
+        /// cell ruling; progress from the drawn circle).</summary>
+        private static string ClockCardSpeech(Transform card)
+        {
+            string name = Describe.TrimQuotes(Describe.TextUnder(card, "Clock Name"))
+                ?? card.name;
+            string progress = GameQueries.ClockProgress(GameQueries.ClockFsm(card));
+            string narrative = Describe.TextUnder(card, "Clock Description");
+            return name + (progress != null ? ", " + progress : "") + "."
+                 + (narrative != null ? " " + narrative : "");
         }
 
         private static string OpSpeech(int row)

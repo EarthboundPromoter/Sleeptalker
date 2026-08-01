@@ -110,13 +110,13 @@ namespace Sleeptalker.Sleeper2
                 if (path.Contains("Map Screen")) continue;
                 // Zone by dial (D9): rig side serves rig rooms; station side never does.
                 if (rigSide != path.Contains("Rig UI")) continue;
-                foreach (Transform root in container)
-                {
-                    var node = NodeOf(root);
-                    if (node != null) nodes.Add(node);
-                }
+                CollectNodes(container, nodes, 0);
             }
-            nodes.Sort((a, b) => a.Azimuth.CompareTo(b.Azimuth));
+            // Map-axis order (live sweep 2026-07-31): the hub is a VERTICAL arc —
+            // the selector's Focus Z walk matches the Y/Z-plane angle DESCENDING
+            // (Docks 133.6° … Factory Row 96.8°), and the X/Z azimuth was noise
+            // (the owner's out-of-order report).
+            nodes.Sort((a, b) => b.Azimuth.CompareTo(a.Azimuth));
             // Self-heal (throttled): an empty zone on a live floor means the
             // container cache is stale (destroyed transforms, additive-load
             // timing) — rediscover rather than stay dead.
@@ -126,6 +126,21 @@ namespace Sleeptalker.Sleeper2
                 _containersFresh = false;
             }
             return nodes;
+        }
+
+        /// <summary>Nodes from a container INCLUDING one level of FSM-less grouping
+        /// transforms ("RIG one shots" — the CS1 Post Rim Gate lesson relearned
+        /// live 2026-07-31: real nodes nest under groupers).</summary>
+        private static void CollectNodes(Transform parent, List<Node> nodes, int depth)
+        {
+            foreach (Transform child in parent)
+            {
+                var node = NodeOf(child);
+                if (node != null) { nodes.Add(node); continue; }
+                if (depth < 1 && child.gameObject.activeInHierarchy
+                    && child.Find("Location Contents") == null && child.childCount > 0)
+                    CollectNodes(child, nodes, depth + 1);
+            }
         }
 
         private static Node NodeOf(Transform root)
@@ -160,8 +175,10 @@ namespace Sleeptalker.Sleeper2
                 Root = root,
                 Button = button.gameObject,
                 CamFocus = root.Find("Location Contents/Cam Focus"),
+                // The map-axis angle: Y/Z plane around the rig center (the hub is
+                // a vertical arc — live sweep + marker geometry, 2026-07-31).
                 Azimuth = center != null
-                    ? Mathf.Atan2(pos.x - center.position.x, pos.z - center.position.z) * Mathf.Rad2Deg
+                    ? Mathf.Atan2(pos.y - center.position.y, pos.z - center.position.z) * Mathf.Rad2Deg
                     : 0f,
             };
         }
