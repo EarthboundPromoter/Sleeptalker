@@ -64,10 +64,27 @@ namespace Sleeptalker.Sleeper2
                 EmptyKey = "zone.desc.none" },
         };
 
+        /// <summary>The row's live column set (owner ruling 2026-07-31, an explicit
+        /// amendment of stable geometry for this facet): the Clock cell EXISTS only
+        /// when the row has a rendered clock — never "Clock: none".</summary>
+        private static List<Column> ColumnsFor(StationAtlas.Node node)
+        {
+            var cols = new List<Column>(Columns.Length);
+            var scratch = new List<string>();
+            foreach (var column in Columns)
+            {
+                if (column.HeaderKey == "zone.col.clock"
+                    && !StationAtlas.ReadClock(node, scratch)) continue;
+                cols.Add(column);
+            }
+            return cols;
+        }
+
         private static readonly TableEngine Table = new TableEngine
         {
             Rows = () => Nodes().Count + Ops().Count,
-            Cols = row => row < Nodes().Count ? Columns.Length : 1,
+            Cols = row => row < Nodes().Count
+                ? ColumnsFor(Nodes()[row]).Count : 1,
             RowSpeech = (r, c) => RowArriveSpeech(r, c),
             CellSpeech = (r, c) => CellRead(r, c),
             // Rig side is a stacked grid (owner design 2026-07-31): Rooms over
@@ -440,8 +457,10 @@ namespace Sleeptalker.Sleeper2
             var nodes = Nodes();
             if (row >= nodes.Count) return OpSpeech(row);
             if (row < 0) return Lex.T("zone.empty");
-            if (col < 0 || col >= Columns.Length) col = 0;
-            var column = Columns[col];
+            var cols = ColumnsFor(nodes[row]);
+            if (col < 0) col = 0;
+            if (col >= cols.Count) col = cols.Count - 1; // row without the parked facet
+            var column = cols[col];
             string content = column.Cell(nodes[row]);
             if (string.IsNullOrEmpty(content)) content = Lex.T(column.EmptyKey);
             return Lex.T(column.HeaderKey) + ": " + content;
@@ -455,7 +474,8 @@ namespace Sleeptalker.Sleeper2
             if (row >= nodes.Count) return OpSpeech(row);
             if (row < 0) return Lex.T("zone.empty");
             var sb = new System.Text.StringBuilder();
-            for (int c = 0; c < Columns.Length; c++)
+            int count = ColumnsFor(nodes[row]).Count;
+            for (int c = 0; c < count; c++)
                 sb.Append(CellRead(row, c)).Append(' ');
             return sb.ToString().TrimEnd();
         }
