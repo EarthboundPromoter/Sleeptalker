@@ -469,6 +469,12 @@ namespace Sleeptalker.Sleeper2
                 // buttons and on/off switches carry ClockValue as consumers — the
                 // residual zero-storm; only the object that DRAWS the clock counts).
                 if (!HasUICircle(fsm.gameObject)) continue;
+                // Pip-class exclusion (ride V4, 2026-08-01: the Contract Board's
+                // "Complete a Contract" drive pips defeat BOTH factors — they
+                // carry ClockValue as consumers and draw their ring with a
+                // UICircle; the bare-value log caught the false "clock 0"). An
+                // FSM whose state set is the pip mechanism is a pip, never a clock.
+                if (HasStatePair(fsm, "PIP on", "PIP off")) continue;
                 return fsm;
             }
             return null;
@@ -479,6 +485,19 @@ namespace Sleeptalker.Sleeper2
             foreach (var c in go.GetComponents<Component>())
                 if (c != null && c.GetType().Name == "UICircle") return true;
             return false;
+        }
+
+        private static bool HasStatePair(PlayMakerFSM fsm, string a, string b)
+        {
+            var states = fsm.FsmStates;
+            if (states == null) return false;
+            bool hasA = false, hasB = false;
+            foreach (var s in states)
+            {
+                if (s.Name == a) hasA = true;
+                else if (s.Name == b) hasB = true;
+            }
+            return hasA && hasB;
         }
 
         /// <summary>"x of y segments" — from the RENDER (owner ruling, ride V3:
