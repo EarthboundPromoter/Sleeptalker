@@ -60,6 +60,8 @@ namespace Sleeptalker.Scaffold
                 { "zone.actions.many", "actions" },
                 { "zone.actions.unavailable", "unavailable" },
                 { "zone.desc.none", "none." },
+                { "zone.section.rooms", "Rooms." },
+                { "zone.section.ops", "Ship operations." },
                 // Location (action view) table
                 { "loc.section.actions", "Action cards." },
                 { "loc.section.clocks", "Clock cards." },

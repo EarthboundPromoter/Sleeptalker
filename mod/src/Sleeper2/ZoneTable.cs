@@ -66,10 +66,15 @@ namespace Sleeptalker.Sleeper2
 
         private static readonly TableEngine Table = new TableEngine
         {
-            Rows = () => Nodes().Count,
-            Cols = _ => Columns.Length,
+            Rows = () => Nodes().Count + Ops().Count,
+            Cols = row => row < Nodes().Count ? Columns.Length : 1,
             RowSpeech = (r, c) => RowArriveSpeech(r, c),
             CellSpeech = (r, c) => CellRead(r, c),
+            // Rig side is a stacked grid (owner design 2026-07-31): Rooms over
+            // Ship operations (End Cycle + crew assignment — the RIG display's
+            // rendered buttons; not nodes, still table nav).
+            SectionOf = row => row < Nodes().Count ? 0 : 1,
+            SectionPrefix = s => Lex.T(s == 1 ? "zone.section.ops" : "zone.section.rooms"),
             EmptyRow = () => Lex.T("zone.empty"),
             EmptyCol = () => Lex.T("zone.empty"),
             EmptyDetail = () => Lex.T("zone.empty"),
@@ -82,7 +87,7 @@ namespace Sleeptalker.Sleeper2
             Table.OnRowArrive = (prev, row) =>
             {
                 var nodes = Nodes();
-                if (row < 0 || row >= nodes.Count) return;
+                if (row < 0 || row >= nodes.Count) return; // ops rows: no hover
                 var button = nodes[row].Button;
                 if (button == null) return;
                 // Engine convention, refined (owner ruling 2026-07-26): node
@@ -102,7 +107,16 @@ namespace Sleeptalker.Sleeper2
             Table.Commit = (row, col) =>
             {
                 var nodes = Nodes();
-                if (row < 0 || row >= nodes.Count) return;
+                if (row >= nodes.Count)
+                {
+                    var ops = Ops();
+                    int oi = row - nodes.Count;
+                    if (oi < 0 || oi >= ops.Count) return;
+                    if (ops[oi].Target != null) Navigator.Click(ops[oi].Target);
+                    else Table.Say(ops[oi].Speech()); // unclickable renders repeat
+                    return;
+                }
+                if (row < 0) return;
                 var button = nodes[row].Button;
                 if (button == null) return;
                 _driveEchoUntil = Time.unscaledTime + 1.5f;
@@ -118,7 +132,7 @@ namespace Sleeptalker.Sleeper2
             var mode = ModeModel.Current();
             if (mode != Mode.Station && mode != Mode.RigRooms) return false;
             if (TopBarTable.Entered) return false; // V-table excursion owns the keys
-            return Nodes().Count > 0;
+            return Nodes().Count + Ops().Count > 0;
         }
 
         public static bool HandleKeys()
@@ -190,6 +204,102 @@ namespace Sleeptalker.Sleeper2
             return _nodes;
         }
 
+        // ---------- Ship operations rows (rig side; owner design 2026-07-31) ----------
+
+        private sealed class OpRow
+        {
+            public System.Func<string> Speech;
+            public GameObject Target;   // null = renders but not clickable now
+        }
+
+        private static readonly List<OpRow> _ops = new List<OpRow>();
+        private static float _opsBuiltAt = -1f;
+
+        /// <summary>The RIG display's rendered operation buttons — End Cycle (the
+        /// designed end-cycle input, D4; the top bar's lookalike is a leave
+        /// button) and the crew assignment buttons. Rendered-only, alpha-honest;
+        /// empty off the rig side.</summary>
+        private static List<OpRow> Ops()
+        {
+            if (Time.unscaledTime - _opsBuiltAt <= CacheWindow) return _ops;
+            _opsBuiltAt = Time.unscaledTime;
+            _ops.Clear();
+            if (!GameQueries.RigSide()) return _ops;
+            var display = GameObject.Find("Letterbox Canvas/RIG display");
+            if (display == null) return _ops;
+
+            var endCycle = display.transform.Find("End Cycle Action");
+            if (endCycle != null && endCycle.gameObject.activeInHierarchy
+                && Util.AlphaUpTo(endCycle) >= 0.05f)
+            {
+                var button = FindDeep(endCycle, "Dice Slot Button");
+                _ops.Add(new OpRow
+                {
+                    Target = button != null && button.gameObject.activeInHierarchy
+                        ? button.gameObject : null,
+                    Speech = () => EndCycleSpeech(endCycle, button),
+                });
+            }
+
+            var crew = display.transform.Find("Crew Assignment/Display");
+            if (crew != null && crew.gameObject.activeInHierarchy)
+            {
+                foreach (var b in crew.GetComponentsInChildren<UnityEngine.UI.Button>(false))
+                {
+                    var go = b.gameObject;
+                    if (Util.AlphaUpTo(go.transform) < 0.05f) continue;
+                    _ops.Add(new OpRow
+                    {
+                        Target = go,
+                        Speech = () => (Describe.FirstText(go) ?? go.name)
+                            + Lex.T("topbar.button-suffix"),
+                    });
+                }
+            }
+            return _ops;
+        }
+
+        /// <summary>End Cycle row: the button's rendered label, its own
+        /// interactable state (CycleBlocked renders as non-interactable), and the
+        /// active cost-strip line (Normal/Starving/Supplied variants — whichever
+        /// renders).</summary>
+        private static string EndCycleSpeech(Transform endCycle, Transform button)
+        {
+            string label = button != null
+                ? (Describe.FirstText(button.gameObject) ?? endCycle.name) : endCycle.name;
+            var sb = new System.Text.StringBuilder(label);
+            var buttonUi = button != null
+                ? button.GetComponent<UnityEngine.UI.Button>() : null;
+            if (buttonUi != null && !buttonUi.IsInteractable())
+                sb.Append(' ').Append(Lex.T("zone.disabled"));
+            foreach (var tmp in endCycle.GetComponentsInChildren<TMPro.TMP_Text>(false))
+            {
+                if (button != null && tmp.transform.IsChildOf(button)) continue;
+                if (Util.AlphaUpTo(tmp.transform, endCycle) < 0.05f) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                sb.Append(". ").Append(text);
+                break; // the active cost-strip line
+            }
+            sb.Append('.');
+            return sb.ToString();
+        }
+
+        private static string OpSpeech(int row)
+        {
+            var ops = Ops();
+            int oi = row - Nodes().Count;
+            if (oi < 0 || oi >= ops.Count) return Lex.T("zone.empty");
+            return ops[oi].Speech();
+        }
+
+        private static Transform FindDeep(Transform root, string name)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                if (t.name == name) return t;
+            return null;
+        }
+
         private static int RowOfClosest()
         {
             var closest = StationAtlas.ClosestButton();
@@ -209,7 +319,8 @@ namespace Sleeptalker.Sleeper2
         private static string RowArriveSpeech(int row, int col)
         {
             var nodes = Nodes();
-            if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
+            if (row >= nodes.Count) return OpSpeech(row);
+            if (row < 0) return Lex.T("zone.empty");
             if (col <= 0) return CompressedReport(nodes[row]);
             var facet = StationAtlas.ReadNameFacet(nodes[row]);
             return NameCell(facet) + " " + CellRead(row, col);
@@ -220,7 +331,8 @@ namespace Sleeptalker.Sleeper2
         private static string CellRead(int row, int col)
         {
             var nodes = Nodes();
-            if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
+            if (row >= nodes.Count) return OpSpeech(row);
+            if (row < 0) return Lex.T("zone.empty");
             if (col < 0 || col >= Columns.Length) col = 0;
             var column = Columns[col];
             string content = column.Cell(nodes[row]);
@@ -233,7 +345,8 @@ namespace Sleeptalker.Sleeper2
         private static string FullReport(int row)
         {
             var nodes = Nodes();
-            if (row < 0 || row >= nodes.Count) return Lex.T("zone.empty");
+            if (row >= nodes.Count) return OpSpeech(row);
+            if (row < 0) return Lex.T("zone.empty");
             var sb = new System.Text.StringBuilder();
             for (int c = 0; c < Columns.Length; c++)
                 sb.Append(CellRead(row, c)).Append(' ');
