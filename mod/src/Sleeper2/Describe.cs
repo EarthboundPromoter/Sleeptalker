@@ -25,6 +25,14 @@ namespace Sleeptalker.Sleeper2
             string difficulty = DifficultyCard(go);
             if (difficulty != null) return difficulty;
 
+            // Title save slots (owner bug report 2026-08-01: focus read ONE stray
+            // field label per slot — "CYCLE button", "CLASS button"): anything
+            // focused under MAIN MENU/…/Slot Menu/<slot> speaks the WHOLE slot —
+            // its name plus every rendered text under the slot root in reading
+            // order, the full save metadata as drawn.
+            string saveSlot = SaveSlotCard(go);
+            if (saveSlot != null) return saveSlot;
+
             // Dialogue skill-check responses carry a governing skill ("//INTERFACE")
             // — decision-relevant, appended to the response read. (The odds the
             // FSM renders on hover are spoken by SkillChecks off the tier-state
@@ -53,6 +61,33 @@ namespace Sleeptalker.Sleeper2
                 return label + role;
             }
             return go.name;
+        }
+
+        /// <summary>Full slot read for the title save/continue menu (census:
+        /// MAIN MENU/Demo Menu/Slot Menu/Slot N — the "Demo Menu" name is a
+        /// wart; the slot FSMs compose Save Description Formatted and the slot
+        /// renders it as field texts). Null off the slot menu.</summary>
+        private static string SaveSlotCard(GameObject go)
+        {
+            if (!Util.HasAncestor(go, "MAIN MENU")) return null;
+            Transform slot = null;
+            for (var cur = go.transform; cur != null; cur = cur.parent)
+            {
+                if (cur.parent != null && cur.parent.name == "Slot Menu")
+                { slot = cur; break; }
+            }
+            if (slot == null) return null;
+
+            var sb = new System.Text.StringBuilder(slot.name).Append('.');
+            foreach (var tmp in slot.GetComponentsInChildren<TMP_Text>(false))
+            {
+                if (!Util.RenderedUp(tmp.transform)) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                sb.Append(' ').Append(text);
+                if (!text.EndsWith(".")) sb.Append('.');
+            }
+            return sb.ToString();
         }
 
         /// <summary>Full metadata read for a difficulty button (child of the
