@@ -329,33 +329,47 @@ namespace Sleeptalker.Sleeper2
         private static string RequiresCell(Transform card)
         {
             var parts = new List<string>();
-            var slot = FindDeep(card, "Gamepad Dice Slot");
-            if (slot != null && slot.gameObject.activeInHierarchy)
+            // THE requirement render (canteen ride capture 2026-07-31): the card
+            // states its own requirement as a sentence — the Input Border's
+            // Relationship line, category AND value, every card kind: dice cards
+            // render "INPUT DICE", cryo cards "INPUT 13 CRYO". One render source
+            // of truth; the COST element and the slot's cost variable are the
+            // loudly-logged backing chain (they read 0 pre-engagement — the
+            // ride's "Costs: 0").
+            string take = null;
+            var inputBorder = FindDeep(card, "Input Border");
+            if (inputBorder != null)
             {
-                var slotFsm = slot.GetComponent<PlayMakerFSM>();
-                if (HasState(slotFsm, "Select Dice"))
-                    parts.Add(Lex.T("loc.takes-die"));
-                else if (HasState(slotFsm, "Check Amount") || HasState(slotFsm, "Slot Item"))
+                string rel = Describe.TextUnder(inputBorder, "Relationship");
+                if (rel != null)
                 {
-                    string cost = Describe.TextUnder(card, "Cost Label")
-                               ?? FirstVisibleText(slot);
-                    if (cost == null && slotFsm != null)
+                    if (rel.StartsWith("INPUT ")) rel = rel.Substring(6).Trim();
+                    take = rel.Equals("DICE", System.StringComparison.OrdinalIgnoreCase)
+                        ? Lex.T("loc.takes-die")
+                        : rel;
+                }
+            }
+            if (take == null)
+            {
+                take = Describe.TextUnder(card, "COST");
+                if (take == null)
+                {
+                    var slot = FindDeep(card, "Gamepad Dice Slot");
+                    var slotFsm = slot != null ? slot.GetComponent<PlayMakerFSM>() : null;
+                    if (slotFsm != null)
                     {
-                        // Backing lane: the slot's own cost variable, flagged.
-                        // Bare number — the Costs header already labels it.
                         var costInt = slotFsm.FsmVariables.GetFsmInt("Item Cost");
                         var costFloat = slotFsm.FsmVariables.GetFsmFloat("Item Cost");
-                        if (costInt != null) cost = costInt.Value.ToString();
-                        else if (costFloat != null) cost = costFloat.Value.ToString("0.#");
-                        LogOnce("[Location] item slot on " + ActionName(card)
-                            + " renders no cost text — variable backing spoken, capture needed");
+                        if (costInt != null) take = costInt.Value.ToString();
+                        else if (costFloat != null) take = costFloat.Value.ToString("0.#");
                     }
-                    if (cost != null) parts.Add(cost);
                 }
-                else
-                    LogOnce("[Location] unknown slot variant on " + ActionName(card)
-                        + " — no take-kind spoken, capture needed");
+                if (take != null)
+                    LogOnce("[Location] no Input Border relationship on " + ActionName(card)
+                        + " — backing lane spoken, capture needed");
             }
+            if (take != null) parts.Add(take);
+
             string skill = Describe.TextUnder(card, "Skill");
             if (skill != null)
             {
@@ -366,28 +380,6 @@ namespace Sleeptalker.Sleeper2
                 parts.Add(tier != null ? skill + " " + tier : skill);
             }
             return parts.Count > 0 ? string.Join(", ", parts.ToArray()) : null;
-        }
-
-        private static bool HasState(PlayMakerFSM fsm, string stateName)
-        {
-            if (fsm == null) return false;
-            var states = fsm.FsmStates;
-            if (states == null) return false;
-            foreach (var s in states)
-                if (s.Name == stateName) return true;
-            return false;
-        }
-
-        /// <summary>First effectively-visible rendered text in a subtree.</summary>
-        private static string FirstVisibleText(Transform root)
-        {
-            foreach (var tmp in root.GetComponentsInChildren<TMPro.TMP_Text>(false))
-            {
-                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
-                string text = SpeechService.Clean(tmp.text);
-                if (!string.IsNullOrEmpty(text)) return text;
-            }
-            return null;
         }
 
         private static string RiskCell(Transform card)
