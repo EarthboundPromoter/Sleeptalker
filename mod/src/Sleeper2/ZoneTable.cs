@@ -192,6 +192,12 @@ namespace Sleeptalker.Sleeper2
 
         private static StationAtlas.Node _followTarget;
         private static float _followUntil = -1f;
+        // Per-zone scroll direction, SELF-CALIBRATING (owner question 2026-07-31:
+        // hub-generic by construction): if a nudge moves the selector's pick away
+        // from the target row, the sign flips. Hexport's verified relationship
+        // (angle descending = Focus Z rising) is only the starting guess.
+        private static float _followSign = 1f;
+        private static int _lastClosestRow = -1;
 
         /// <summary>Runs from Tick on the zone floors: steps Focus Z toward the
         /// target node until the game's own selector picks it (selector = the
@@ -211,17 +217,34 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
             var closest = StationAtlas.ClosestButton();
-            if (closest == _followTarget.Button) { _followTarget = null; return; }
+            if (closest == _followTarget.Button)
+            { _followTarget = null; _lastClosestRow = -1; return; }
             var z = GameQueries.FocusZ();
             if (z == null) { _followTarget = null; return; }
-            // Which way? The selector's current pick tells us where we are on the
-            // axis; the angle ordering (descending = rising Focus Z) gives the sign.
+
             var nodes = Nodes();
-            float closestAz = _followTarget.Azimuth;
-            foreach (var n in nodes)
-                if (n.Button == closest) { closestAz = n.Azimuth; break; }
-            float dir = _followTarget.Azimuth < closestAz ? 1f : -1f;
-            GameQueries.SetFocusZ(z.Value + dir * 120f);
+            int targetRow = -1, closestRow = -1;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (nodes[i].Button == _followTarget.Button) targetRow = i;
+                if (nodes[i].Button == closest) closestRow = i;
+            }
+            if (targetRow < 0) { _followTarget = null; return; }
+
+            // Self-calibration: did the last nudge help? Moving AWAY flips the
+            // zone's sign (a different hub's axis may run the other way).
+            if (_lastClosestRow >= 0 && closestRow >= 0
+                && Mathf.Abs(closestRow - targetRow) > Mathf.Abs(_lastClosestRow - targetRow))
+            {
+                _followSign = -_followSign;
+                Plugin.Log.LogInfo("[Zone] follow sign flipped for this zone");
+            }
+            _lastClosestRow = closestRow;
+
+            // Row delta gives the direction along the table's own order; with no
+            // selector pick yet, walk positive and let self-calibration correct.
+            float dir = closestRow >= 0 ? Mathf.Sign(targetRow - closestRow) : 1f;
+            GameQueries.SetFocusZ(z.Value + dir * _followSign * 120f);
         }
 
         private static void ExitTable()
