@@ -117,6 +117,15 @@ namespace Sleeptalker.Sleeper2
                     Adopt(_pending);
                     _pending = null;
                 }
+                else if (GameQueries.Paused())
+                {
+                    // Pause force-closes the Tutorial System (D7): a pending panel
+                    // will never show — release the claim NOW, or the speech gate
+                    // silences the pause menu (sync review, HIGH-adjacent).
+                    Plugin.Log.LogInfo("[Tutorial] pending claim released: pause force-close");
+                    _pending = null;
+                    if (_panel == null) SpeechService.EndModal();
+                }
                 else if (Time.unscaledTime - _pendingSince > 3f)
                 {
                     Plugin.Log.LogWarning("[Tutorial] trigger content " + _pending.name

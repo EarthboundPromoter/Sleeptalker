@@ -128,21 +128,45 @@ namespace Sleeptalker.Sleeper2
                 // First entry: start the walk where the camera already is — the
                 // selector's current pick, the game's own truth.
                 _entered = true;
+                _enteredRigSide = GameQueries.RigSide();
                 Table.Reset(RowOfClosest());
             }
             return Table.HandleKeys();
         }
 
+        private static bool _enteredRigSide;
+
+        /// <summary>Suspension vs exit (sync review HIGH-2; CS1 D3 — overlays are
+        /// EXCURSIONS): pause, tutorial, dialogue, dice, map, the V-table and the
+        /// action view all suspend — cursor and hover kept, silent return. The
+        /// table exits (reset, un-hover) only on a GENUINE surface change: the
+        /// zone flips sides (Station↔RigRooms — two different node lists) or the
+        /// scene goes away.</summary>
         public static void Tick()
         {
-            if (!Active())
+            if (!_entered) return;
+            var mode = ModeModel.Current();
+            bool onZoneFloor = mode == Mode.Station || mode == Mode.RigRooms;
+            if (onZoneFloor && GameQueries.RigSide() != _enteredRigSide)
             {
-                _entered = false;
-                if (_hovered != null)
-                {
-                    HoverNode(_hovered, true);
-                    _hovered = null;
-                }
+                ExitTable();
+                return;
+            }
+            if (mode == Mode.Title || mode == Mode.Travel)
+                ExitTable();
+        }
+
+        /// <summary>Scene teardown: full exit (containers are gone).</summary>
+        public static void OnSceneChanged() => ExitTable();
+
+        private static void ExitTable()
+        {
+            _entered = false;
+            Table.Reset();
+            if (_hovered != null)
+            {
+                HoverNode(_hovered, true);
+                _hovered = null;
             }
         }
 

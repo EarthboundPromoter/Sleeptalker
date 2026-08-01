@@ -52,12 +52,15 @@ namespace Sleeptalker.Sleeper2
                 SpeechService.Say(Lex.T("dice.refused"), Priority.Queued, "dice");
             });
 
-            // Die resting: the card's controller reaches Slotted Idle. Speak the
-            // rendered outlook (DICE percentages — the sanctioned odds vocabulary)
-            // and the rendered commit-button label (START ACTION family).
-            FsmSignals.Subscribe(null, "Slotted Idle", (fsm, s) =>
+            // Die resting: the card's controller reaches Slotted — the state ALL
+            // controller variants share (sync review MED-5: the cryo and small
+            // variants have no Slotted Idle and "Action Cryo Controller" fails a
+            // name filter; the class key is the Action Identifier variable,
+            // 363/363 controllers, D2). Speak the rendered outlook and the
+            // rendered commit-button label.
+            FsmSignals.Subscribe(null, "Slotted", (fsm, s) =>
             {
-                if (fsm == null || !fsm.gameObject.name.Contains("Action Controller")) return;
+                if (!IsActionController(fsm)) return;
                 var card = fsm.transform.parent;
                 var sb = new System.Text.StringBuilder(Lex.T("dice.slotted"));
                 if (card != null)
@@ -80,12 +83,21 @@ namespace Sleeptalker.Sleeper2
             // Its own announcement so it never sounds like a cancel (CS1 ruling).
             FsmSignals.Subscribe(null, "Unslot Dice", (fsm, s) =>
             {
-                if (fsm == null || !fsm.gameObject.name.Contains("Action Controller")) return;
+                if (!IsActionController(fsm)) return;
                 SpeechService.Say(Lex.T("dice.returned"), Priority.Queued, "dice");
             });
         }
 
         private static float _closedSpokeAt = -10f;
+
+        /// <summary>Controller class by its Action Identifier variable (D2:
+        /// 363/363 across all variants), never by owner name.</summary>
+        private static bool IsActionController(PlayMakerFSM fsm)
+        {
+            if (fsm == null || fsm.gameObject == null) return false;
+            var id = fsm.FsmVariables.GetFsmString("Action Identifier");
+            return id != null && !string.IsNullOrEmpty(id.Value);
+        }
 
         private static bool IsDiceSystem(PlayMakerFSM fsm)
             => fsm != null && fsm.gameObject != null
@@ -148,6 +160,12 @@ namespace Sleeptalker.Sleeper2
         /// Returns false when nothing was engaged so the caller falls through to
         /// the next cancel rung — a Backspace must never be swallowed (ride V1:
         /// transient system states ate presses).</summary>
+        /// <summary>One physical Back press is seen by EVERY polling rung at once
+        /// (D11 §4's ButtonDown/ButtonUp table) — so one Backspace fires every
+        /// applicable rung's own event in the same beat: cursors drop their pickup
+        /// (DragReset), slots reset, systems Back (the ButtonUp half that re-arms
+        /// the picker after a retract — sync review MED-7: sending only the slot
+        /// half closed the picker instead of reopening it).</summary>
         public static bool CancelRung()
         {
             bool sent = false;
@@ -155,27 +173,35 @@ namespace Sleeptalker.Sleeper2
             {
                 if (fsm == null || fsm.gameObject == null) continue;
                 if (!fsm.gameObject.scene.IsValid()) continue;
-                if (fsm.gameObject.name != "Gamepad Dice Slot") continue;
                 if (!fsm.gameObject.activeInHierarchy) continue;
+                string name = fsm.gameObject.name;
                 string state = fsm.ActiveStateName;
-                if (state == "Select Dice" || state == "Select Dice 2" || state == "Slot Item")
+                if (name == "Gamepad Dice Slot")
                 {
-                    fsm.SendEvent("Reset");
-                    sent = true;
-                }
-            }
-            if (!sent)
-            {
-                foreach (var system in GameQueries.DiceSystems())
-                {
-                    if (system == null || system.gameObject == null
-                        || !system.gameObject.activeInHierarchy) continue;
-                    string state = system.ActiveStateName;
-                    if (state == "Active" || state == "Slotted")
+                    if (state == "Select Dice" || state == "Select Dice 2" || state == "Slot Item")
                     {
-                        system.SendEvent("Back");
+                        fsm.SendEvent("Reset");
                         sent = true;
                     }
+                }
+                else if (name.StartsWith("Dice Cursor"))
+                {
+                    if (state == "Select Dice" || state == "Slot Die")
+                    {
+                        fsm.SendEvent("DragReset");
+                        sent = true;
+                    }
+                }
+            }
+            foreach (var system in GameQueries.DiceSystems())
+            {
+                if (system == null || system.gameObject == null
+                    || !system.gameObject.activeInHierarchy) continue;
+                string state = system.ActiveStateName;
+                if (state == "Active" || state == "Slotted")
+                {
+                    system.SendEvent("Back");
+                    sent = true;
                 }
             }
             if (!sent)

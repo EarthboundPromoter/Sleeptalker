@@ -84,31 +84,41 @@ namespace Sleeptalker.Sleeper2
             });
         }
 
+        /// <summary>The floors this excursion may sit on. Anything else claiming
+        /// the mode (pause, map, dice, conversation, tutorial, cycle) evicts it
+        /// SILENTLY and immediately — the excursion must never outlive its floor
+        /// (sync review HIGH-1: an entered V-table under pause kept the keys and
+        /// could click into paused FSMs).</summary>
+        private static bool FloorLive()
+        {
+            var mode = ModeModel.Current();
+            return mode == Mode.Station || mode == Mode.RigRooms || mode == Mode.ActionView;
+        }
+
         public static bool HandleKeys()
         {
+            if (Entered && !FloorLive())
+            {
+                Exit(false);
+                return false; // the new floor's owner sees this key untouched
+            }
             if (Input.GetKeyDown(KeyCode.V))
             {
-                if (Entered) { Exit(); return true; }
+                if (Entered) { Exit(true); return true; }
                 // V only engages on the floors where the bar renders (CS1 KeyScope
                 // idiom: out-of-scope keys stay dead, never half-work).
-                var mode = ModeModel.Current();
-                if (mode != Mode.Station && mode != Mode.RigRooms
-                    && mode != Mode.ActionView) return false;
+                if (!FloorLive()) return false;
                 Enter();
                 return true;
             }
             if (!Entered) return false;
-            if (Input.GetKeyDown(KeyCode.Backspace)) { Exit(); return true; }
+            if (Input.GetKeyDown(KeyCode.Backspace)) { Exit(true); return true; }
             return Table.HandleKeys();
         }
 
         public static void Tick()
         {
-            // The bar itself is only rendered on gameplay floors; leaving them
-            // (title, travel teardown) drops the excursion.
-            if (!Entered) return;
-            var mode = ModeModel.Current();
-            if (mode == Mode.Title || mode == Mode.Travel) Exit();
+            if (Entered && !FloorLive()) Exit(false);
         }
 
         private static void Enter()
@@ -119,16 +129,17 @@ namespace Sleeptalker.Sleeper2
             if (Rows().Count == 0)
             {
                 Table.Say(Lex.T("topbar.empty"));
-                Exit();
+                Exit(false);
                 return;
             }
             Table.Say(Lex.T("topbar.title") + " " + Speak(0));
         }
 
-        private static void Exit()
+        private static void Exit(bool announce)
         {
             Entered = false;
-            SpeechService.Say(Lex.T("topbar.closed"), Priority.Immediate, "query");
+            if (announce)
+                SpeechService.Say(Lex.T("topbar.closed"), Priority.Immediate, "query");
         }
 
         // ---------- Rows ----------
@@ -167,7 +178,7 @@ namespace Sleeptalker.Sleeper2
                 Table.Say(Speak(row)); // readout row: Enter repeats (CS1 idiom)
                 return;
             }
-            Exit();
+            Exit(false); // the click's own consequences speak
             Navigator.Click(target);
         }
 

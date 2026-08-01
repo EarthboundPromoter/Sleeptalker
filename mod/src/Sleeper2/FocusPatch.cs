@@ -111,6 +111,16 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
 
+            // Cycle transition: the pipeline's Check Variables broadcast and clock
+            // wake pulses drive a scene-wide focus flurry (D4 — the CS1 flurry-gate
+            // target). Game-driven selections stay silent until the controller is
+            // back in Idle; the future cycle summary speaks the outcome instead.
+            if (!userInitiated && GameQueries.CycleTransitioning())
+            {
+                Plugin.Log.LogInfo("[Focus] suppressed (cycle transition): " + selected.name);
+                return;
+            }
+
             int id = selected.GetInstanceID();
             float now = Time.unscaledTime;
             if (!userInitiated &&

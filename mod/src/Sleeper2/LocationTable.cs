@@ -77,35 +77,58 @@ namespace Sleeptalker.Sleeper2
             return true;
         }
 
-        public static bool HandleKeys()
-        {
-            if (!_entered)
-            {
-                _entered = true;
-                Table.Reset();
-                // Landing read: the section prefix + top row, same shape a row
-                // arrival speaks (the native focus is already on a die slot —
-                // the table is the browse layer above it).
-                if (Actions().Count + Clocks().Count > 0)
-                    Table.Say(Lex.T("loc.section.actions") + " " + RowRead(0, 0));
-                else
-                    Table.Say(Lex.T("loc.empty"));
-                return true;
-            }
-            return Table.HandleKeys();
-        }
+        public static bool HandleKeys() => Table.HandleKeys();
+
+        private static Transform _landedGroup;
 
         public static void Tick()
         {
-            // Reset only when the VIEW closes — pause/allocation/conversation are
-            // excursions and keep the cursor (CS1 D3 ruling).
-            if (!ModeModel.ActionViewUp() && _entered)
+            // Entry (and its landing read) happens HERE, not in the key handler —
+            // sync review HIGH-3: a landing that consumes the triggering key
+            // swallowed the first Backspace after view-open.
+            if (!_entered && Active())
             {
-                _entered = false;
-                _group = null;
-                _builtAt = -1f;
+                _entered = true;
+                _landedGroup = OpenGroup();
                 Table.Reset();
+                Land();
+                return;
             }
+            if (!_entered) return;
+
+            // Content swap under a still-true Action View? global (sync review
+            // MED-9: story variants swap whole groups): fresh surface, fresh land.
+            if (ModeModel.ActionViewUp())
+            {
+                var group = OpenGroup();
+                if (group != _landedGroup)
+                {
+                    _landedGroup = group;
+                    _builtAt = -1f;
+                    Table.Reset();
+                    if (Active()) Land();
+                }
+                return;
+            }
+
+            // The view closed: real exit (excursions never reach here — Active()
+            // false alone does not reset, CS1 D3).
+            _entered = false;
+            _group = null;
+            _landedGroup = null;
+            _builtAt = -1f;
+            Table.Reset();
+        }
+
+        /// <summary>The landing read: the top row with ITS OWN section prefix —
+        /// a clock-only group lands on "Clock cards.", never a hardcoded
+        /// "Action cards." (sync review MED-9).</summary>
+        private static void Land()
+        {
+            int total = Actions().Count + Clocks().Count;
+            if (total == 0) { Table.Say(Lex.T("loc.empty")); return; }
+            string prefix = Lex.T(ClockRowAt(0) ? "loc.section.clocks" : "loc.section.actions");
+            Table.Say(prefix + " " + RowRead(0, 0));
         }
 
         // ---------- Rows (fetched fresh per keypress; group cached briefly) ----------

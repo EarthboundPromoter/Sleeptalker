@@ -279,9 +279,9 @@ namespace Sleeptalker.Sleeper2
                 var fsm = FsmWithStates(child, "PIP on", "PIP off");
                 if (fsm == null) continue;
                 if (!child.gameObject.activeInHierarchy) continue;
-                var cg = child.GetComponent<CanvasGroup>();
-                float alpha = cg != null ? cg.alpha : Util.AlphaUpTo(child);
-                if (alpha < 0.05f) continue;
+                // Effective alpha — own CanvasGroup AND ancestors (sync review LOW:
+                // a pip's own group at 1 under a hidden ancestor is not rendered).
+                if (Util.AlphaUpTo(child) < 0.05f) continue;
                 var quest = fsm.FsmVariables.GetFsmString("Quest Name");
                 if (quest == null || string.IsNullOrEmpty(quest.Value))
                 {

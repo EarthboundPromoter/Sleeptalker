@@ -60,7 +60,9 @@ namespace Sleeptalker.Sleeper2
         private static Transform _pauseCanvas;
         private static PlayMakerFSM[] _diceSystems;
         private static PlayMakerFSM _pauseFsm, _mapFsm, _shipFsm, _cycleFsm, _mainMenuFsm;
-        private static bool _mainMenuChecked;
+        // Negative caches (sync review LOW): a dial FSM absent from this scene is
+        // absent until the next scene load — never a per-frame full-heap rescan.
+        private static bool _mainMenuChecked, _pauseChecked, _mapChecked, _shipChecked, _cycleChecked;
 
         /// <summary>Title scene: the MAIN MENU FSM exists (level0 only; its state is
         /// the screen dial TitleFlow/ClassSelect already ride).</summary>
@@ -79,12 +81,17 @@ namespace Sleeptalker.Sleeper2
         /// authoritative dial). Alpha read kept only as the missing-FSM fallback.</summary>
         public static bool Paused()
         {
-            if (_pauseFsm == null || _pauseFsm.gameObject == null)
-                _pauseFsm = FindFsm("PAUSE");
-            if (_pauseFsm != null)
+            if (!_pauseChecked)
             {
+                _pauseFsm = FindFsm("PAUSE");
+                _pauseChecked = true;
+            }
+            if (_pauseFsm != null && _pauseFsm.gameObject != null)
+            {
+                // INIT is the boot state, not paused (D7: Idle/INIT = unpaused;
+                // sync review MED-6).
                 string state = _pauseFsm.ActiveStateName;
-                return !string.IsNullOrEmpty(state) && state != "Idle";
+                return !string.IsNullOrEmpty(state) && state != "Idle" && state != "INIT";
             }
             if (_pauseCanvas == null)
             {
@@ -99,50 +106,89 @@ namespace Sleeptalker.Sleeper2
         /// button and Rewired "Map" both just send Open to it).</summary>
         public static bool MapOpen()
         {
-            if (_mapFsm == null || _mapFsm.gameObject == null)
+            if (!_mapChecked)
+            {
                 _mapFsm = FindFsm("Map Screen");
-            return _mapFsm != null && _mapFsm.ActiveStateName == "Open";
+                _mapChecked = true;
+            }
+            return _mapFsm != null && _mapFsm.gameObject != null
+                && _mapFsm.ActiveStateName == "Open";
         }
 
-        /// <summary>Map close: send the map root FSM its own Back event — exactly
-        /// what the Back Button FSM fires off Rewired Back (D8).</summary>
+        /// <summary>Map close: the map's sub-windows (Travel Confirm / Leave
+        /// Contract / Abandon — forced-focus dialogs, D8) own Back while they
+        /// render; only with none up does Back go to the root FSM (sync review
+        /// MED-10: a root Back under a live confirm would close the map beneath
+        /// the dialog).</summary>
+        private static readonly string[] MapSubWindows =
+            { "Travel Confirm Window", "Leave Contract Window", "Abandon Window" };
+
         public static void MapBack()
         {
-            if (_mapFsm == null || _mapFsm.gameObject == null)
+            if (!_mapChecked)
+            {
                 _mapFsm = FindFsm("Map Screen");
-            if (_mapFsm != null) _mapFsm.SendEvent("Back");
-            else Plugin.Log.LogWarning("[Game] MapBack: no Map Screen FSM found");
+                _mapChecked = true;
+            }
+            if (_mapFsm == null || _mapFsm.gameObject == null)
+            {
+                Plugin.Log.LogWarning("[Game] MapBack: no Map Screen FSM found");
+                return;
+            }
+            foreach (var name in MapSubWindows)
+            {
+                var window = FindFsm(name);
+                if (window == null || window.gameObject == null) continue;
+                if (!window.gameObject.activeInHierarchy) continue;
+                if (Util.AlphaUpTo(window.transform) < 0.05f) continue;
+                window.SendEvent("Back");
+                return;
+            }
+            _mapFsm.SendEvent("Back");
         }
 
         /// <summary>Rig side: the Ship UI toggle FSM in "Idle Ship" (D9 — the same
         /// button whose label flips RIG/EXPLORE; its own state is the dial).</summary>
         public static bool RigSide()
         {
-            if (_shipFsm == null || _shipFsm.gameObject == null)
+            if (!_shipChecked)
+            {
                 _shipFsm = FindFsm("Ship UI", "Ship and Map Buttons");
-            return _shipFsm != null && _shipFsm.ActiveStateName == "Idle Ship";
+                _shipChecked = true;
+            }
+            return _shipFsm != null && _shipFsm.gameObject != null
+                && _shipFsm.ActiveStateName == "Idle Ship";
         }
 
         /// <summary>The Ship UI toggle's own button — the designed rig exit.</summary>
         public static GameObject ShipToggleButton()
         {
-            if (_shipFsm == null || _shipFsm.gameObject == null)
+            if (!_shipChecked)
+            {
                 _shipFsm = FindFsm("Ship UI", "Ship and Map Buttons");
-            if (_shipFsm == null) return null;
+                _shipChecked = true;
+            }
+            if (_shipFsm == null || _shipFsm.gameObject == null) return null;
             var button = _shipFsm.transform.Find("Button");
             return button != null ? button.gameObject : null;
         }
 
         /// <summary>Cycle transitioning: the Cycle Controller off Idle. Its rest
         /// state has FOUR exits in CS2 (player end-cycle, travel, narrative
-        /// auto-cycle, permadeath — D4); any departure is the transition wrapper.</summary>
+        /// auto-cycle, permadeath — D4); any departure is the transition wrapper.
+        /// Quit is the parked end-dead screen, not a transition (sync review LOW —
+        /// the mode must not wedge in CycleTransition at permadeath).</summary>
         public static bool CycleTransitioning()
         {
-            if (_cycleFsm == null || _cycleFsm.gameObject == null)
+            if (!_cycleChecked)
+            {
                 _cycleFsm = FindFsm("Cycle Controller");
-            if (_cycleFsm == null) return false;
+                _cycleChecked = true;
+            }
+            if (_cycleFsm == null || _cycleFsm.gameObject == null) return false;
             string state = _cycleFsm.ActiveStateName;
-            return !string.IsNullOrEmpty(state) && state != "Idle";
+            return !string.IsNullOrEmpty(state)
+                && state != "Idle" && state != "INIT" && state != "Quit";
         }
 
         /// <summary>Travel ride: Current Location Scene prefix "TRN" (D9 — the
@@ -161,6 +207,10 @@ namespace Sleeptalker.Sleeper2
         /// mod tables suspend (excursion, not exit).</summary>
         public static bool DiceAllocationLive()
         {
+            // Engaged = Active or Slotted ONLY (sync review MED-4): Setup is the
+            // player system's own startState, Reselector the cancel-out beat, and
+            // D4's cycle pipeline restarts the tray FSMs every cycle — counting
+            // those flashed the mode mid-pipeline. The D11 hysteresis carries.
             var systems = DiceSystems();
             for (int i = 0; i < systems.Length; i++)
             {
@@ -168,8 +218,7 @@ namespace Sleeptalker.Sleeper2
                 if (fsm == null || fsm.gameObject == null
                     || !fsm.gameObject.activeInHierarchy) continue;
                 string state = fsm.ActiveStateName;
-                if (!string.IsNullOrEmpty(state) && state != "Off" && state != "INIT")
-                    return true;
+                if (state == "Active" || state == "Slotted") return true;
             }
             return false;
         }
@@ -200,7 +249,7 @@ namespace Sleeptalker.Sleeper2
             _shipFsm = null;
             _cycleFsm = null;
             _mainMenuFsm = null;
-            _mainMenuChecked = false;
+            _mainMenuChecked = _pauseChecked = _mapChecked = _shipChecked = _cycleChecked = false;
         }
 
         // ---------- Clocks (the ClockValue FSM class) ----------
