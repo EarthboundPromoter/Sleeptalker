@@ -319,11 +319,22 @@ namespace Sleeptalker.Sleeper2
             {
                 if (!fsm.gameObject.activeInHierarchy) continue;
                 if (!Util.RenderedUp(fsm.transform)) continue;
-                if (fsm.FsmVariables.GetFsmFloat("ClockValue") != null
-                    || fsm.FsmVariables.GetFsmInt("ClockValue") != null)
-                    return fsm;
+                if (fsm.FsmVariables.GetFsmFloat("ClockValue") == null
+                    && fsm.FsmVariables.GetFsmInt("ClockValue") == null) continue;
+                // The class is variable AND renderer (ride log 2026-07-31: marker
+                // buttons and on/off switches carry ClockValue as consumers — the
+                // residual zero-storm; only the object that DRAWS the clock counts).
+                if (!HasUICircle(fsm.gameObject)) continue;
+                return fsm;
             }
             return null;
+        }
+
+        private static bool HasUICircle(GameObject go)
+        {
+            foreach (var c in go.GetComponents<Component>())
+                if (c != null && c.GetType().Name == "UICircle") return true;
+            return false;
         }
 
         /// <summary>"x of y segments" — from the RENDER (owner ruling, ride V3:
