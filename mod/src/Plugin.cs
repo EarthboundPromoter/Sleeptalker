@@ -112,6 +112,7 @@ namespace Sleeptalker
             TutorialReader.Tick();
             ZoneTable.Tick();
             MapTable.Tick();
+            GuideReader.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();
             ActionOutcomes.Tick();

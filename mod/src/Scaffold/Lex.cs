@@ -148,6 +148,11 @@ namespace Sleeptalker.Scaffold
                 { "options.setting", "setting" },
                 { "options.changed", "changed" },
                 { "help.options", "Up and Down walk settings, Left and Right change them, Enter presses Back, Escape backs out." },
+                // Guide reader
+                { "guide.intro", "Guide. Up and Down for topics, Enter opens one." },
+                { "guide.empty", "No topics." },
+                { "guide.page-empty", "Page empty." },
+                { "help.guide", "Up and Down walk topics, Enter opens; in the text, Up and Down move by paragraph, Left returns to topics, Space reads the whole page." },
                 { "help.journal", "Up and Down walk drives, Left and Right browse cells, Enter performs the cell, Slash swaps tabs, J or Backspace closes." },
                 // Drive journal
                 { "mode.drivelog", "Drive log" },

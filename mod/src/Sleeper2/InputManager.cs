@@ -91,6 +91,21 @@ namespace Sleeptalker.Sleeper2
                     return;
             }
 
+            // Guide reader (owner design 2026-08-01, D7 (d)): two-pane node
+            // graph — topics left, live paragraph box right; Enter = native
+            // radio-group click, cursor into the fresh page at the top.
+            if (GuideReader.IsActive())
+            {
+                if (Input.GetKeyDown(KeyCode.DownArrow)) { GuideReader.Move(1); return; }
+                if (Input.GetKeyDown(KeyCode.UpArrow)) { GuideReader.Move(-1); return; }
+                if (Input.GetKeyDown(KeyCode.LeftArrow)) { GuideReader.LeftKey(); return; }
+                if (Input.GetKeyDown(KeyCode.RightArrow)) { GuideReader.RightKey(); return; }
+                if (Input.GetKeyDown(KeyCode.Space)) { GuideReader.SpaceKey(); return; }
+                if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    && GuideReader.Activate())
+                    return;
+            }
+
             // The top-bar V table: an excursion above the zone/location tables
             // (owner ruling 2026-07-31 — the whole bar walkable, buttons included).
             if (TopBarTable.HandleKeys()) return;
@@ -263,7 +278,8 @@ namespace Sleeptalker.Sleeper2
                 case Mode.Map: keys = Lex.T("help.map"); break;
                 case Mode.DriveLog: keys = Lex.T("help.journal"); break;
                 case Mode.Pause:
-                    keys = Lex.T(OptionsReview.IsActive() ? "help.options" : "help.native");
+                    keys = Lex.T(OptionsReview.IsActive() ? "help.options"
+                        : GuideReader.IsActive() ? "help.guide" : "help.native");
                     break;
                 default: keys = Lex.T("help.native"); break;
             }
