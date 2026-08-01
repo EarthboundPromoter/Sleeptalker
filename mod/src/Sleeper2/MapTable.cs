@@ -183,6 +183,11 @@ namespace Sleeptalker.Sleeper2
                 // BLOCKED response, Travel Confirm, crew selection — D8 (d)).
                 _selectEchoUntil = Time.unscaledTime + 1.5f;
                 Navigator.Click(button);
+                // BLOCKED watch (ride V4 owner report: denial sound with no
+                // context): if this commit lands in the pipeline's BLOCKED
+                // state, speak the game's own rendered reason (Vector Display).
+                _blockWatch = button;
+                _blockWatchUntil = Time.unscaledTime + 1.5f;
             };
         }
 
@@ -263,6 +268,7 @@ namespace Sleeptalker.Sleeper2
                 if (_entered || _lastPlane != null) Exit();
                 return;
             }
+            BlockWatchTick();
             var plane = StationAtlas.ActiveMapPlane();
             if (plane == null) return;                    // the Trans beat between planes
             if (_lastPlane == null) { _lastPlane = plane; return; } // opening plane (always local) — silent
@@ -282,7 +288,51 @@ namespace Sleeptalker.Sleeper2
             _lastPlane = null;
             _builtAt = -1f;
             _selectEchoUntil = -1f; // the close-time RefocusUI re-pick must speak
+            _blockWatch = null;
             Table.Reset();
+        }
+
+        // ---------- BLOCKED response (D8 (d) step 3 — the silent denial) ----------
+        // The fuel/hazard check has no window and no focus change: red tint, the
+        // Inaccess sound, an animator flash on the Vector Display. The player
+        // gets the game's own rendered reason: the display's readout (the fuel
+        // cost the marker published on select), spoken once behind "Blocked."
+        // — game-sanctioned word, rendered content, capture-before-teardown.
+
+        private static GameObject _blockWatch;
+        private static float _blockWatchUntil = -1f;
+
+        private static void BlockWatchTick()
+        {
+            if (_blockWatch == null) return;
+            if (Time.unscaledTime > _blockWatchUntil) { _blockWatch = null; return; }
+            if (!_blockWatch.activeInHierarchy) { _blockWatch = null; return; }
+            foreach (var fsm in _blockWatch.GetComponents<PlayMakerFSM>())
+            {
+                if (fsm.ActiveStateName != "BLOCKED") continue;
+                if (!HasStates(fsm, "Check Fuel", "Travel")) continue; // pipeline class
+                _blockWatch = null;
+                var sb = new System.Text.StringBuilder(Lex.T("map.blocked"));
+                var display = GameQueries.MapRoot() != null
+                    ? GameQueries.MapRoot().Find("Vector Display") : null;
+                if (display != null && display.gameObject.activeInHierarchy)
+                {
+                    foreach (var tmp in display.GetComponentsInChildren<TMPro.TMP_Text>(false))
+                    {
+                        if (!Util.RenderedUp(tmp.transform)) continue;
+                        string text = SpeechService.Clean(tmp.text);
+                        if (string.IsNullOrEmpty(text)) continue;
+                        sb.Append(' ').Append(text).Append('.');
+                        Plugin.Log.LogInfo("[Map] BLOCKED render capture: \"" + text + "\"");
+                    }
+                }
+                else
+                {
+                    Plugin.Log.LogInfo("[Map] BLOCKED with no rendered Vector Display — capture");
+                }
+                Table.Say(sb.ToString());
+                return;
+            }
         }
 
         // ---------- Rows ----------

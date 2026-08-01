@@ -70,6 +70,7 @@ namespace Sleeptalker.Scaffold
                 { "map.section.suffix", " sector." },
                 { "map.section.controls", "Map controls." },
                 { "map.section.unknown", "Unmapped" },
+                { "map.blocked", "Blocked." },
                 // Location (action view) table
                 { "loc.section.actions", "Action cards." },
                 { "loc.section.clocks", "Clock cards." },
