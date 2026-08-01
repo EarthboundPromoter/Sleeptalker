@@ -307,12 +307,16 @@ namespace Sleeptalker.Sleeper2
             _focusChecked = false;
         }
 
-        // ---------- Camera scroll accumulator (the CS1 map-table contract,
-        // rebuilt on the live sweep 2026-07-31: hover never drove the camera —
-        // the selector follows the CAMERA, so table follow writes the game's own
-        // scroll input accumulator, Focus Z (+ damped follower + global), exactly
-        // the value class CS1's table wrote. Supersedes the S3 never-write ruling
-        // by owner direction; flagged in the reply for veto.) ----------
+        // ---------- Camera wire (D17 2026-08-01 — the decoded transfer function;
+        // supersedes the live-sweep closed-loop stepping drive, which is DELETED).
+        // The "wire" is a translation at Z/Y hubs and a gimbal rotation at two:
+        // Focus Z / Focus Y are FSM-local scroll accumulators, X Rot Global IS
+        // the gimbal accumulator; the FSM's own FloatSmoothDamp (0.2 s) glides
+        // the Damped twin and applies it to the transform. The follow writes ONE
+        // accumulator, ONCE, and never touches Damped anything, the read-only
+        // Focus Z/Y Global mirrors, or the player's FreeLook rotation (decoded
+        // independent — closed writer set; scrolling recenters rotation only on
+        // native INPUT, so mod writes leave the player's yaw alone). ----------
 
         private static PlayMakerFSM _focusFsm;
         private static bool _focusChecked;
@@ -327,28 +331,115 @@ namespace Sleeptalker.Sleeper2
             return _focusFsm != null && _focusFsm.gameObject != null ? _focusFsm : null;
         }
 
-        public static float? FocusZ()
+        // Baked rig constants (D17, raw level2 transforms). S0 = the selector
+        // origin (Focus world position at park); P = the Focus Gimbal pivot.
+        private const float WireS0Y = 4813.777f;
+        private const float WireS0Z = -18.667f;
+        private const float GimbalPivotY = -3623f;
+        private const float GimbalPivotZ = -4244f;
+        private const float GimbalArmAngle = 143.397f;
+        // Beyond this clamp distance the marker is authored out of the wire's
+        // band (D17 anomaly classes 2/3): pan to the edge, then the selector
+        // log is the tripwire.
+        private const float OutOfBandSlack = 25f;
+
+        /// <summary>Single-write camera pan to a marker's live world position
+        /// (D17 mod recipe). Picks the wire by the Focus FSM's own active state
+        /// (the mode truth), computes the closed-form target, clamps to the
+        /// scene's authored band, writes the ONE live accumulator. Every failed
+        /// assumption refuses loudly instead of mis-panning. Returns false when
+        /// nothing was written; outOfBand = target clamped to the band edge.</summary>
+        public static bool CameraPanTo(Vector3 marker, out bool outOfBand)
         {
+            outOfBand = false;
             var fsm = FocusFsm();
-            var v = fsm != null ? fsm.FsmVariables.GetFsmFloat("Focus Z") : null;
-            return v != null ? v.Value : (float?)null;
+            if (fsm == null)
+            {
+                LogOnceGame("[Game] pan: no Focus FSM in scene — follow silent");
+                return false;
+            }
+
+            // Patch guard (D17 recipe 4): the gimbal pivot is live-readable —
+            // a game update that moves the rig must refuse, not mis-pan.
+            var gimbal = fsm.transform.parent;
+            if (gimbal == null
+                || Mathf.Abs(gimbal.localPosition.y - GimbalPivotY) > 1f
+                || Mathf.Abs(gimbal.localPosition.z - GimbalPivotZ) > 1f)
+            {
+                LogOnceGame("[Game] pan REFUSED: Focus Gimbal off the baked rig "
+                    + "constants — re-run decode D17");
+                return false;
+            }
+
+            // Mode truth = the FSM's own scroll state. Disabled 4/5 (map open,
+            // orbital handoff) absorbs writes on re-entry (GetPosition re-seeds)
+            // — defer; the next row change writes again.
+            string state = fsm.ActiveStateName;
+            if (state != "Z SCROLL" && state != "Y SCROLL" && state != "Gimbal Scroll")
+            {
+                Plugin.Log.LogInfo("[Game] pan deferred: Focus FSM in \"" + state + "\"");
+                return false;
+            }
+
+            var min = GlobalFloat("Min Rotation");
+            var max = GlobalFloat("Max Rotation");
+            if (min == null || max == null || min.Value >= max.Value)
+            {
+                LogOnceGame("[Game] pan: fixed-view scene (Min >= Max) — never write");
+                return false;
+            }
+
+            // Consistency check only (D17 recipe 2) — the state already ruled.
+            var scrollMode = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                .GetFsmInt("Scroll Mode");
+            int expected = state == "Z SCROLL" ? 1 : state == "Y SCROLL" ? 2 : 3;
+            if (scrollMode != null && scrollMode.Value != expected)
+                LogOnceGame("[Game] pan: Scroll Mode global " + scrollMode.Value
+                    + " disagrees with FSM state \"" + state + "\" — capture");
+
+            float target;
+            if (state == "Z SCROLL")
+                target = marker.z - WireS0Z;
+            else if (state == "Y SCROLL")
+                target = ((marker.y - WireS0Y) - 0.5f * (marker.z - WireS0Z)) / 1.25f;
+            else
+            {
+                // Gimbal: ray from the live pivot through the marker (body is
+                // parked at origin in this mode, so world == local checked above).
+                var p = gimbal.position;
+                target = GimbalArmAngle
+                    - Mathf.Atan2(marker.y - p.y, marker.z - p.z) * Mathf.Rad2Deg;
+            }
+
+            float clamped = Mathf.Clamp(target, min.Value, max.Value);
+            outOfBand = Mathf.Abs(clamped - target) > OutOfBandSlack;
+
+            if (state == "Gimbal Scroll")
+            {
+                var accumulator = GlobalFloat("X Rot Global");
+                if (accumulator == null)
+                {
+                    LogOnceGame("[Game] pan: no X Rot Global — capture");
+                    return false;
+                }
+                accumulator.Value = clamped;
+            }
+            else
+            {
+                var accumulator = fsm.FsmVariables.GetFsmFloat(
+                    state == "Z SCROLL" ? "Focus Z" : "Focus Y");
+                if (accumulator == null)
+                {
+                    LogOnceGame("[Game] pan: Focus FSM lacks its own accumulator — capture");
+                    return false;
+                }
+                accumulator.Value = clamped;
+            }
+            return true;
         }
 
-        public static void SetFocusZ(float value)
-        {
-            var fsm = FocusFsm();
-            if (fsm == null) return;
-            var min = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Min Rotation");
-            var max = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Max Rotation");
-            value = Mathf.Clamp(value, min != null ? min.Value : -1400f,
-                                       max != null ? max.Value : 3600f);
-            var local = fsm.FsmVariables.GetFsmFloat("Focus Z");
-            var damped = fsm.FsmVariables.GetFsmFloat("Damped Z");
-            var global = HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat("Focus Z Global");
-            if (local != null) local.Value = value;
-            if (damped != null) damped.Value = value;
-            if (global != null) global.Value = value;
-        }
+        private static HutongGames.PlayMaker.FsmFloat GlobalFloat(string name)
+            => HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat(name);
 
         // ---------- Clocks (the ClockValue FSM class) ----------
         // Census 2026-07-31: 2,823 FSMs across 32 levels carry the variable

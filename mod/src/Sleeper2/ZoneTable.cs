@@ -121,18 +121,20 @@ namespace Sleeptalker.Sleeper2
                 _hovered = button;
             };
             Table.Detail = (row, col) => Table.Say(FullReport(row));
-            // Camera follow (CS1 map-table contract, live-sweep rebuild): write
-            // only when the row ACTUALLY changed, post-speech (AfterRowSpeech is
-            // the engine's documented camera hook). The follow is closed-loop:
-            // nudge the scroll accumulator toward the node until the game's own
-            // selector picks it (the sweep's ground truth), bounded + timed.
+            // Camera follow (D17 rebuild, 2026-08-01 — the CS1 shape proper):
+            // ONE write of the wire accumulator to the closed-form target, only
+            // when the row ACTUALLY changed, post-speech; the game's own
+            // SmoothDamp glides the pan. The closed-loop stepping drive is
+            // deleted. Pan targets come ONLY from rendered table rows (owner
+            // requirement): this hook is the sole caller and nodes[row] is the
+            // whitelisted, render-gated row set — the D17 dataset is a
+            // conversion aid, never a target source.
             Table.AfterRowSpeech = (prev, row) =>
             {
                 if (row == prev) return;
                 var nodes = Nodes();
-                if (row < 0 || row >= nodes.Count) { _followTarget = null; return; }
-                _followTarget = nodes[row];
-                _followUntil = Time.unscaledTime + 1.5f;
+                if (row < 0 || row >= nodes.Count) { _verifyTarget = null; return; }
+                PanTo(nodes[row]);
             };
 
             Table.Commit = (row, col) =>
@@ -189,7 +191,7 @@ namespace Sleeptalker.Sleeper2
         /// scene goes away.</summary>
         public static void Tick()
         {
-            FollowTick();
+            VerifyTick();
             if (!_entered) return;
             var mode = ModeModel.Current();
             bool onZoneFloor = mode == Mode.Station || mode == Mode.RigRooms;
@@ -205,69 +207,55 @@ namespace Sleeptalker.Sleeper2
         /// <summary>Scene teardown: full exit (containers are gone).</summary>
         public static void OnSceneChanged() => ExitTable();
 
-        // ---------- Closed-loop camera follow ----------
+        // ---------- Camera follow (D17 single-write + settle verification) ----------
 
-        private static StationAtlas.Node _followTarget;
-        private static float _followUntil = -1f;
-        // Per-zone scroll direction, SELF-CALIBRATING (owner question 2026-07-31:
-        // hub-generic by construction): if a nudge moves the selector's pick away
-        // from the target row, the sign flips. Hexport's verified relationship
-        // (angle descending = Focus Z rising) is only the starting guess.
-        private static float _followSign = 1f;
-        private static int _lastClosestRow = -1;
+        private static StationAtlas.Node _verifyTarget;
+        private static bool _verifyOutOfBand;
+        private static float _verifyAt = -1f;
 
-        /// <summary>Runs from Tick on the zone floors: steps Focus Z toward the
-        /// target node until the game's own selector picks it (selector = the
-        /// ground truth the sweep validated). Direction from the map-axis angle
-        /// (Focus Z rises as the angle falls — sweep 2026-07-31). Stops on pick,
-        /// bound, timeout (logged), or the floor changing.</summary>
-        private static void FollowTick()
+        /// <summary>One wire write per actual row change (D17 recipe). The
+        /// selector is demoted from steering wheel to tripwire: after the
+        /// game's damper settles we compare its pick to the target and log any
+        /// mismatch loudly — we never fight the selector or write again.</summary>
+        private static void PanTo(StationAtlas.Node node)
         {
-            if (_followTarget == null) return;
+            _verifyTarget = null;
+            if (node.Button == null) return;
+            if (!GameQueries.CameraPanTo(node.Button.transform.position,
+                out bool outOfBand)) return;
+            _verifyTarget = node;
+            _verifyOutOfBand = outOfBand;
+            // SmoothDamp is 0.2 s; check well after it has converged.
+            _verifyAt = Time.unscaledTime + 0.8f;
+        }
+
+        /// <summary>The fail-loud seam for every D17-derived constant: if the
+        /// baked transfer function ever lands the camera on the wrong node, one
+        /// ride surfaces it here. Out-of-band markers (authored past the clamp,
+        /// D17 anomaly classes 2/3) pan to the band edge — a mismatch there is
+        /// expected vocabulary, logged with the flag so the ride can tell the
+        /// classes apart.</summary>
+        private static void VerifyTick()
+        {
+            if (_verifyTarget == null || Time.unscaledTime < _verifyAt) return;
+            var target = _verifyTarget;
+            _verifyTarget = null;
             var mode = ModeModel.Current();
-            if (mode != Mode.Station && mode != Mode.RigRooms) { _followTarget = null; return; }
-            if (Time.unscaledTime > _followUntil)
-            {
-                Plugin.Log.LogInfo("[Zone] camera follow timed out short of "
-                    + _followTarget.Name + " — capture");
-                _followTarget = null;
-                return;
-            }
+            if (mode != Mode.Station && mode != Mode.RigRooms) return;
             var closest = StationAtlas.ClosestButton();
-            if (closest == _followTarget.Button)
-            { _followTarget = null; _lastClosestRow = -1; return; }
-            var z = GameQueries.FocusZ();
-            if (z == null) { _followTarget = null; return; }
-
-            var nodes = Nodes();
-            int targetRow = -1, closestRow = -1;
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                if (nodes[i].Button == _followTarget.Button) targetRow = i;
-                if (nodes[i].Button == closest) closestRow = i;
-            }
-            if (targetRow < 0) { _followTarget = null; return; }
-
-            // Self-calibration: did the last nudge help? Moving AWAY flips the
-            // zone's sign (a different hub's axis may run the other way).
-            if (_lastClosestRow >= 0 && closestRow >= 0
-                && Mathf.Abs(closestRow - targetRow) > Mathf.Abs(_lastClosestRow - targetRow))
-            {
-                _followSign = -_followSign;
-                Plugin.Log.LogInfo("[Zone] follow sign flipped for this zone");
-            }
-            _lastClosestRow = closestRow;
-
-            // Row delta gives the direction along the table's own order; with no
-            // selector pick yet, walk positive and let self-calibration correct.
-            float dir = closestRow >= 0 ? Mathf.Sign(targetRow - closestRow) : 1f;
-            GameQueries.SetFocusZ(z.Value + dir * _followSign * 120f);
+            if (closest == target.Button) return;
+            Plugin.Log.LogWarning("[Zone] follow verify MISMATCH"
+                + (_verifyOutOfBand ? " (out-of-band, edge pan — class 2/3)" : "")
+                + ": expected \"" + target.Name + "\", selector holds "
+                + (closest != null ? "\"" + closest.name + "\" at "
+                    + Util.PathOf(closest) : "nothing")
+                + " — capture");
         }
 
         private static void ExitTable()
         {
             _entered = false;
-            _followTarget = null;
+            _verifyTarget = null;
             Table.Reset();
             if (_hovered != null)
             {
