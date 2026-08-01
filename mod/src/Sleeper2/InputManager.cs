@@ -135,6 +135,32 @@ namespace Sleeptalker.Sleeper2
             // nav idiom (owner design 2026-07-26). WASD stays the game's camera.
             if (ZoneTable.Active() && ZoneTable.HandleKeys()) return;
 
+            // Pause selection anchor (ride V4 state bug 2026-08-01: arrows in
+            // the first beat after Esc walked the STALE station selection
+            // beneath the fresh pause overlay — the game's own RESUME reselect
+            // lands a beat later). In Pause mode, a move or Enter whose
+            // selection sits outside the Pause Canvas re-anchors onto the menu
+            // (the game's own reselect idiom) instead of driving the world
+            // underneath. One press = the anchor; the next press navigates.
+            bool navKey = Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.DownArrow)
+                || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow)
+                || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+            if (navKey && ModeModel.Current() == Mode.Pause)
+            {
+                var selected = Navigator.Current();
+                if (selected == null || !Util.HasAncestor(selected, "Pause Canvas"))
+                {
+                    var canvas = GameObject.Find("PAUSE/Pause Canvas");
+                    var anchor = canvas != null
+                        ? canvas.GetComponentInChildren<Selectable>(false) : null;
+                    if (anchor != null)
+                    {
+                        Navigator.Select(anchor.gameObject);
+                        return;
+                    }
+                }
+            }
+
             if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Up); return; }
             if (Input.GetKeyDown(KeyCode.DownArrow)) { Navigator.Move(MoveDirection.Down); return; }
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { Navigator.Move(MoveDirection.Left); return; }
