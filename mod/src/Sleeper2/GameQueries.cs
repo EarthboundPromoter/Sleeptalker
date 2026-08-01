@@ -348,10 +348,12 @@ namespace Sleeptalker.Sleeper2
         /// (the mode truth), computes the closed-form target, clamps to the
         /// scene's authored band, writes the ONE live accumulator. Every failed
         /// assumption refuses loudly instead of mis-panning. Returns false when
-        /// nothing was written; outOfBand = target clamped to the band edge.</summary>
-        public static bool CameraPanTo(Vector3 marker, out bool outOfBand)
+        /// nothing was written; outOfBand = target clamped to the band edge;
+        /// written = the clamped value (the settle-verify promise).</summary>
+        public static bool CameraPanTo(Vector3 marker, out bool outOfBand, out float written)
         {
             outOfBand = false;
+            written = 0f;
             var fsm = FocusFsm();
             if (fsm == null)
             {
@@ -413,6 +415,7 @@ namespace Sleeptalker.Sleeper2
 
             float clamped = Mathf.Clamp(target, min.Value, max.Value);
             outOfBand = Mathf.Abs(clamped - target) > OutOfBandSlack;
+            written = clamped;
 
             if (state == "Gimbal Scroll")
             {
@@ -440,6 +443,30 @@ namespace Sleeptalker.Sleeper2
 
         private static HutongGames.PlayMaker.FsmFloat GlobalFloat(string name)
             => HutongGames.PlayMaker.FsmVariables.GlobalVariables.GetFsmFloat(name);
+
+        /// <summary>Settle verification for the single-write follow (ride V4
+        /// recalibration: the SELECTOR was the wrong judge — lateral scatter
+        /// makes it hold a neighbor even at a node's exact optimum, D17 live
+        /// correction 4). The wire itself is the promise the transfer function
+        /// makes: true when the damped twin has converged onto the written
+        /// value (mode-aware tolerance — degrees are tighter than units).
+        /// Missing rig/state reads true: nothing to judge, not a fault.</summary>
+        public static bool WireSettled(float written, out float actual)
+        {
+            actual = written;
+            var fsm = FocusFsm();
+            if (fsm == null) return true;
+            string state = fsm.ActiveStateName;
+            string damped = state == "Z SCROLL" ? "Damped Z"
+                : state == "Y SCROLL" ? "Damped Y"
+                : state == "Gimbal Scroll" ? "Damped X" : null;
+            if (damped == null) return true;
+            var v = fsm.FsmVariables.GetFsmFloat(damped);
+            if (v == null) return true;
+            actual = v.Value;
+            float tolerance = state == "Gimbal Scroll" ? 0.5f : 5f;
+            return Mathf.Abs(actual - written) <= tolerance;
+        }
 
         // ---------- Clocks (the ClockValue FSM class) ----------
         // Census 2026-07-31: 2,823 FSMs across 32 levels carry the variable

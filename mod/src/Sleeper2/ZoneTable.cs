@@ -216,12 +216,16 @@ namespace Sleeptalker.Sleeper2
 
         private static StationAtlas.Node _verifyTarget;
         private static bool _verifyOutOfBand;
+        private static float _verifyValue;
         private static float _verifyAt = -1f;
+        private static readonly HashSet<string> _scatterLogged = new HashSet<string>();
 
         /// <summary>One wire write per actual row change (D17 recipe). The
-        /// selector is demoted from steering wheel to tripwire: after the
-        /// game's damper settles we compare its pick to the target and log any
-        /// mismatch loudly — we never fight the selector or write again.</summary>
+        /// settle verify judges the WIRE, not the selector (ride V4
+        /// recalibration, owner-validated camera vs constant selector noise):
+        /// the transfer function's promise is that the damper converges on the
+        /// written value. Selector disagreement is the lateral-scatter class —
+        /// D17 live correction 4 — logged once per node as info, never fought.</summary>
         private static void PanTo(StationAtlas.Node node)
         {
             _verifyTarget = null;
@@ -232,19 +236,14 @@ namespace Sleeptalker.Sleeper2
             // short. The root is the stable authored transform, and it is what
             // D17's per-node predictions verify against (Docks −1297 ✓ live).
             if (!GameQueries.CameraPanTo(node.Root.position,
-                out bool outOfBand)) return;
+                out bool outOfBand, out float written)) return;
             _verifyTarget = node;
             _verifyOutOfBand = outOfBand;
+            _verifyValue = written;
             // SmoothDamp is 0.2 s; check well after it has converged.
             _verifyAt = Time.unscaledTime + 0.8f;
         }
 
-        /// <summary>The fail-loud seam for every D17-derived constant: if the
-        /// baked transfer function ever lands the camera on the wrong node, one
-        /// ride surfaces it here. Out-of-band markers (authored past the clamp,
-        /// D17 anomaly classes 2/3) pan to the band edge — a mismatch there is
-        /// expected vocabulary, logged with the flag so the ride can tell the
-        /// classes apart.</summary>
         private static void VerifyTick()
         {
             if (_verifyTarget == null || Time.unscaledTime < _verifyAt) return;
@@ -252,14 +251,25 @@ namespace Sleeptalker.Sleeper2
             _verifyTarget = null;
             var mode = ModeModel.Current();
             if (mode != Mode.Station && mode != Mode.RigRooms) return;
+            if (!GameQueries.WireSettled(_verifyValue, out float actual))
+            {
+                // The real fail-loud seam: the damper did not land on our value
+                // (absorbed write, unexpected clamp, something fighting the wire).
+                Plugin.Log.LogWarning("[Zone] follow WIRE mismatch"
+                    + (_verifyOutOfBand ? " (out-of-band, edge pan — class 2/3)" : "")
+                    + ": wrote " + _verifyValue.ToString("0.0") + ", damped settled at "
+                    + actual.ToString("0.0") + " for \"" + target.Name + "\" — capture");
+                return;
+            }
             var closest = StationAtlas.ClosestButton();
             if (closest == target.Button) return;
-            Plugin.Log.LogWarning("[Zone] follow verify MISMATCH"
-                + (_verifyOutOfBand ? " (out-of-band, edge pan — class 2/3)" : "")
-                + ": expected \"" + target.Name + "\", selector holds "
-                + (closest != null ? "\"" + closest.name + "\" at "
-                    + Util.PathOf(closest) : "nothing")
-                + " — capture");
+            // Wire landed; the selector holds a neighbor — lateral scatter,
+            // expected on far-off-line nodes. Info, once per node.
+            if (_scatterLogged.Add(target.Name))
+                Plugin.Log.LogInfo("[Zone] selector holds a neighbor at \""
+                    + target.Name + "\" (lateral scatter, D17 LC-4"
+                    + (_verifyOutOfBand ? "; out-of-band edge pan" : "") + ") — "
+                    + (closest != null ? Util.PathOf(closest) : "nothing"));
         }
 
         private static void ExitTable()
