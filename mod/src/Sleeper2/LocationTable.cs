@@ -35,8 +35,10 @@ namespace Sleeptalker.Sleeper2
         private static readonly string[] ActionHeaderKeys =
             { "loc.col.name", "loc.col.requires", "loc.col.risk",
               "loc.col.cost", "loc.col.predicted", "loc.col.narrative" };
+        // Clock columns fused by owner ruling (ride V1): name and progress are ONE
+        // cell — "Name, x of y." — narrative beside it. No separate Progress column.
         private static readonly string[] ClockHeaderKeys =
-            { "loc.col.name", "loc.col.progress", "loc.col.narrative" };
+            { "loc.col.name", "loc.col.narrative" };
 
         private static readonly List<Transform> _actions = new List<Transform>();
         private static readonly List<Transform> _clocks = new List<Transform>();
@@ -391,45 +393,57 @@ namespace Sleeptalker.Sleeper2
             => Describe.TextUnder(clock, "Clock Description")
                ?? Describe.TextUnder(clock, "Description");
 
-        private static string ClockRow(Transform clock)
+        /// <summary>Name-and-progress fused cell (owner ruling): "Name, x of y."</summary>
+        private static string ClockNameCell(Transform clock)
         {
             string progress = ClockProgress(clock);
+            return ClockName(clock) + (progress != null ? ", " + progress : "");
+        }
+
+        private static string ClockRow(Transform clock)
+        {
             string narrative = ClockNarrative(clock);
-            return ClockName(clock) + (progress != null ? ", " + progress : "") + "."
-                 + (narrative != null ? " " + narrative : "");
+            return ClockNameCell(clock) + "." + (narrative != null ? " " + narrative : "");
         }
 
         private static string ClockCell(Transform clock, int col)
         {
             switch (col)
             {
-                case 0: return ClockRow(clock);
-                case 1: return ClockProgress(clock);
+                case 0: return ClockNameCell(clock);
                 default: return ClockNarrative(clock);
             }
         }
 
-        /// <summary>Clock progress: MUZZLED pending the step-clock decode. Ride V1:
-        /// the first-numeric-var guess announced a wrong value — misinformation, the
-        /// worst bug class (CS1 Q1 precedent). Until the family's value variable is
-        /// decoded, rows speak name + narrative only, and this logs the step clock's
-        /// full numeric-variable inventory once per clock as the capture.</summary>
+        /// <summary>Clock progress from the step clock's own ClockValue — the exact
+        /// CS1 variable name, live-captured on ride V1 with the owner's ground truth
+        /// (value 0 while a wrong-variable guess spoke 1; the guess-class read is
+        /// banned — exact name only). Steps from the element's own name
+        /// ("4 Step Clock"). Absent ClockValue = silent + capture log.</summary>
         private static string ClockProgress(Transform clock)
         {
             Transform stepClock = null;
             foreach (var t in clock.GetComponentsInChildren<Transform>(false))
                 if (t.name.EndsWith("Step Clock")) { stepClock = t; break; }
             if (stepClock == null) return null;
-            var inventory = new System.Text.StringBuilder();
+            float steps = Util.LeadingInt(stepClock.name);
             foreach (var fsm in stepClock.GetComponents<PlayMakerFSM>())
             {
-                foreach (var f in fsm.FsmVariables.FloatVariables)
-                    inventory.Append(f.Name).Append('=').Append(f.Value).Append("; ");
-                foreach (var i in fsm.FsmVariables.IntVariables)
-                    inventory.Append(i.Name).Append('=').Append(i.Value).Append("; ");
+                var f = fsm.FsmVariables.GetFsmFloat("ClockValue");
+                if (f != null)
+                    return f.Value.ToString("0.#")
+                        + (steps > 0f ? " " + Lex.T("vitals.of") + " " + steps.ToString("0") : "");
+                var i = fsm.FsmVariables.GetFsmInt("ClockValue");
+                if (i != null)
+                    return i.Value
+                        + (steps > 0f ? " " + Lex.T("vitals.of") + " " + steps.ToString("0") : "");
             }
-            LogOnce("[Location] CLOCK PROGRESS CAPTURE \"" + stepClock.name + "\" on "
-                + clock.name + ": " + inventory);
+            var inventory = new System.Text.StringBuilder();
+            foreach (var fsm in stepClock.GetComponents<PlayMakerFSM>())
+                foreach (var f in fsm.FsmVariables.FloatVariables)
+                    inventory.Append(f.Name).Append("; ");
+            LogOnce("[Location] step clock \"" + stepClock.name + "\" on " + clock.name
+                + " has no ClockValue var — capture needed. Floats: " + inventory);
             return null;
         }
 
