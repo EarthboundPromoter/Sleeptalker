@@ -32,8 +32,10 @@ namespace Sleeptalker.Sleeper2
     {
         private const float CacheWindow = 0.4f;
 
+        // "Costs" not "Requires" (owner ruling): the cell composes the take-kind
+        // directly — "a die", "15 CRYO", "X item" — no verb echo under the header.
         private static readonly string[] ActionHeaderKeys =
-            { "loc.col.name", "loc.col.requires", "loc.col.risk",
+            { "loc.col.name", "loc.col.costs", "loc.col.risk",
               "loc.col.cost", "loc.col.predicted", "loc.col.narrative" };
         // Clock columns fused by owner ruling (ride V1): name and progress are ONE
         // cell — "Name, x of y." — narrative beside it. No separate Progress column.
@@ -284,10 +286,10 @@ namespace Sleeptalker.Sleeper2
         private static string ActionRow(Transform card)
         {
             var sb = new System.Text.StringBuilder(ActionName(card)).Append('.');
-            string requires = RequiresCell(card);
-            if (requires != null)
-                sb.Append(' ').Append(Lex.T("loc.col.requires")).Append(' ')
-                  .Append(requires).Append('.');
+            string costs = RequiresCell(card);
+            if (costs != null)
+                sb.Append(' ').Append(Lex.T("loc.col.costs")).Append(' ')
+                  .Append(costs).Append('.');
             string risk = RiskCell(card);
             if (risk != null) sb.Append(' ').Append(risk).Append('.');
             string lockText = SkillLockText(card);
@@ -340,12 +342,11 @@ namespace Sleeptalker.Sleeper2
                     if (cost == null && slotFsm != null)
                     {
                         // Backing lane: the slot's own cost variable, flagged.
+                        // Bare number — the Costs header already labels it.
                         var costInt = slotFsm.FsmVariables.GetFsmInt("Item Cost");
                         var costFloat = slotFsm.FsmVariables.GetFsmFloat("Item Cost");
-                        if (costInt != null)
-                            cost = Lex.T("loc.costs") + " " + costInt.Value;
-                        else if (costFloat != null)
-                            cost = Lex.T("loc.costs") + " " + costFloat.Value.ToString("0.#");
+                        if (costInt != null) cost = costInt.Value.ToString();
+                        else if (costFloat != null) cost = costFloat.Value.ToString("0.#");
                         LogOnce("[Location] item slot on " + ActionName(card)
                             + " renders no cost text — variable backing spoken, capture needed");
                     }
