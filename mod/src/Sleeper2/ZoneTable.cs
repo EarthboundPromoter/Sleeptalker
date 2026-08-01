@@ -64,9 +64,12 @@ namespace Sleeptalker.Sleeper2
                 EmptyKey = "zone.desc.none" },
         };
 
-        /// <summary>The row's live column set (owner ruling 2026-07-31, an explicit
-        /// amendment of stable geometry for this facet): the Clock cell EXISTS only
-        /// when the row has a rendered clock — never "Clock: none".</summary>
+        /// <summary>The row's live column set (owner rulings 2026-07-31 and
+        /// 2026-08-01, explicit amendments of stable geometry for these facets):
+        /// the Clock cell EXISTS only when the row has a rendered clock — never
+        /// "Clock: none" — and the Drives cell EXISTS only when the location has
+        /// an active drive pip, speaking "Tracked drive: name" (tracking stays
+        /// the game's own gate; presentation ruling of 2026-08-01).</summary>
         private static List<Column> ColumnsFor(StationAtlas.Node node)
         {
             var cols = new List<Column>(Columns.Length);
@@ -75,6 +78,8 @@ namespace Sleeptalker.Sleeper2
             {
                 if (column.HeaderKey == "zone.col.clock"
                     && !StationAtlas.ReadClock(node, scratch)) continue;
+                if (column.HeaderKey == "zone.col.drives"
+                    && StationAtlas.ReadDrives(node).Count == 0) continue;
                 cols.Add(column);
             }
             return cols;

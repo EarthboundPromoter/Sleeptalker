@@ -113,6 +113,8 @@ namespace Sleeptalker.Sleeper2
             {
                 if (column.HeaderKey == "zone.col.clock"
                     && !StationAtlas.ReadClock(node, scratch)) continue;
+                if (column.HeaderKey == "zone.col.drives"
+                    && StationAtlas.ReadDrives(node).Count == 0) continue;
                 if (column.HeaderKey == "map.col.fuel"
                     && FuelCostOf(node) == null) continue;
                 cols.Add(column);

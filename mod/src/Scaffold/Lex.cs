@@ -49,7 +49,7 @@ namespace Sleeptalker.Scaffold
                 { "zone.disabled", "Disabled." },
                 { "zone.col.name", "Name" },
                 { "zone.col.clock", "Clock" },
-                { "zone.col.drives", "Drives" },
+                { "zone.col.drives", "Tracked drive" },
                 { "zone.col.actions", "Actions" },
                 { "zone.col.description", "Description" },
                 { "zone.clock.shown", "shown" },
