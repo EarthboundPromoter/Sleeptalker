@@ -104,7 +104,7 @@ namespace Sleeptalker.Sleeper2
                 // Render truth: an alpha-hidden container is not on screen (the
                 // closed Map Screen keeps its marker containers active — ride V1's
                 // phantom rows and zero clocks).
-                if (Util.AlphaUpTo(container) < 0.05f) continue;
+                if (!Util.RenderedUp(container)) continue;
                 string path = Util.PathOf(container.gameObject);
                 // The map's containers belong to the future map table, never this one.
                 if (path.Contains("Map Screen")) continue;
@@ -296,7 +296,7 @@ namespace Sleeptalker.Sleeper2
                 if (!child.gameObject.activeInHierarchy) continue;
                 // Effective alpha — own CanvasGroup AND ancestors (sync review LOW:
                 // a pip's own group at 1 under a hidden ancestor is not rendered).
-                if (Util.AlphaUpTo(child) < 0.05f) continue;
+                if (!Util.RenderedUp(child)) continue;
                 var quest = fsm.FsmVariables.GetFsmString("Quest Name");
                 if (quest == null || string.IsNullOrEmpty(quest.Value))
                 {

@@ -24,6 +24,28 @@ namespace Sleeptalker.Scaffold
             return alpha;
         }
 
+        /// <summary>The full render test — the THREE hiding channels the game uses
+        /// (ride V3 finding; the D2 evidence line names Canvas.enabled as the marker
+        /// family's hide): active in hierarchy, effective CanvasGroup alpha, AND the
+        /// nearest Canvas ancestor enabled — a disabled Canvas draws nothing while
+        /// its subtree stays active with alpha 1, invisible to the first two checks
+        /// (the "unloaded zero clocks"). Every "is this drawn?" question routes here.</summary>
+        public static bool RenderedUp(Transform t, Transform stopAt = null)
+        {
+            if (t == null || !t.gameObject.activeInHierarchy) return false;
+            if (AlphaUpTo(t, stopAt) < 0.05f) return false;
+            for (var cur = t; cur != null && cur != stopAt; cur = cur.parent)
+            {
+                var canvas = cur.GetComponent<Canvas>();
+                if (canvas != null)
+                {
+                    if (!canvas.enabled) return false;
+                    break; // the nearest canvas is this element's rendering root
+                }
+            }
+            return true;
+        }
+
         /// <summary>True when go or any ancestor bears exactly this name.</summary>
         public static bool HasAncestor(GameObject go, string name)
         {

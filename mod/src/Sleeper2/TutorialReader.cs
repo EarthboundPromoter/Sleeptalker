@@ -103,7 +103,7 @@ namespace Sleeptalker.Sleeper2
 
         private static bool IsShowing(Transform t)
         {
-            return t != null && t.gameObject.activeInHierarchy && Util.AlphaUpTo(t) >= 0.05f;
+            return t != null && t.gameObject.activeInHierarchy && Util.RenderedUp(t);
         }
 
         public static void Tick()
@@ -290,7 +290,7 @@ namespace Sleeptalker.Sleeper2
             {
                 if (button != null && tmp.transform.IsChildOf(button.transform)) continue;
                 if (InsidePrompt(tmp.transform, panel)) continue;
-                if (Util.AlphaUpTo(tmp.transform, panel.parent) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, panel.parent)) continue;
                 if (string.IsNullOrEmpty(tmp.text) || tmp.text.Trim().Length <= 1) continue;
                 texts.Add((tmp.transform.position, tmp));
             }

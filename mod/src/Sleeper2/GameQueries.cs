@@ -99,7 +99,7 @@ namespace Sleeptalker.Sleeper2
                 _pauseCanvas = go != null ? go.transform : null;
                 if (_pauseCanvas == null) return false;
             }
-            return Util.AlphaUpTo(_pauseCanvas) >= 0.05f;
+            return Util.RenderedUp(_pauseCanvas);
         }
 
         /// <summary>Map open: the Map Screen root FSM in "Open" (D8; the top-bar
@@ -140,7 +140,7 @@ namespace Sleeptalker.Sleeper2
                 var window = FindFsm(name);
                 if (window == null || window.gameObject == null) continue;
                 if (!window.gameObject.activeInHierarchy) continue;
-                if (Util.AlphaUpTo(window.transform) < 0.05f) continue;
+                if (!Util.RenderedUp(window.transform)) continue;
                 window.SendEvent("Back");
                 return;
             }
@@ -273,7 +273,7 @@ namespace Sleeptalker.Sleeper2
             foreach (var fsm in root.GetComponentsInChildren<PlayMakerFSM>(false))
             {
                 if (!fsm.gameObject.activeInHierarchy) continue;
-                if (Util.AlphaUpTo(fsm.transform) < 0.05f) continue;
+                if (!Util.RenderedUp(fsm.transform)) continue;
                 if (fsm.FsmVariables.GetFsmFloat("ClockValue") != null
                     || fsm.FsmVariables.GetFsmInt("ClockValue") != null)
                     return fsm;

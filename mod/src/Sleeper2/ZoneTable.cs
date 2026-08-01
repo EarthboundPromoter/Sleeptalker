@@ -230,7 +230,7 @@ namespace Sleeptalker.Sleeper2
 
             var endCycle = display.transform.Find("End Cycle Action");
             if (endCycle != null && endCycle.gameObject.activeInHierarchy
-                && Util.AlphaUpTo(endCycle) >= 0.05f)
+                && Util.RenderedUp(endCycle))
             {
                 var button = FindDeep(endCycle, "Dice Slot Button");
                 _ops.Add(new OpRow
@@ -247,7 +247,7 @@ namespace Sleeptalker.Sleeper2
                 foreach (var b in crew.GetComponentsInChildren<UnityEngine.UI.Button>(false))
                 {
                     var go = b.gameObject;
-                    if (Util.AlphaUpTo(go.transform) < 0.05f) continue;
+                    if (!Util.RenderedUp(go.transform)) continue;
                     _ops.Add(new OpRow
                     {
                         Target = go,
@@ -275,7 +275,7 @@ namespace Sleeptalker.Sleeper2
             foreach (var tmp in endCycle.GetComponentsInChildren<TMPro.TMP_Text>(false))
             {
                 if (button != null && tmp.transform.IsChildOf(button)) continue;
-                if (Util.AlphaUpTo(tmp.transform, endCycle) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, endCycle)) continue;
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text)) continue;
                 sb.Append(". ").Append(text);

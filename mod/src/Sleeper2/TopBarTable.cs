@@ -191,7 +191,7 @@ namespace Sleeptalker.Sleeper2
         private static string ButtonLine(GameObject button)
         {
             if (button == null || !button.activeInHierarchy) return null;
-            if (Util.AlphaUpTo(button.transform) < 0.05f) return null;
+            if (!Util.RenderedUp(button.transform)) return null;
             // Label renders on the button's parent block (Name sibling) or itself.
             string label = Describe.FirstText(button.transform.parent != null
                 ? button.transform.parent.gameObject : button);

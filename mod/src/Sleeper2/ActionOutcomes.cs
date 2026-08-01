@@ -196,7 +196,7 @@ namespace Sleeptalker.Sleeper2
             var effects = new List<(string, string)>();
             foreach (var tmp in card.GetComponentsInChildren<TMP_Text>(false))
             {
-                if (Util.AlphaUpTo(tmp.transform, card) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, card)) continue;
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text)) continue;
                 if (text[0] != '+' && text[0] != '-') continue;

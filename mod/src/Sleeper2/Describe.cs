@@ -170,7 +170,7 @@ namespace Sleeptalker.Sleeper2
             foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
             {
                 if (tmp.gameObject.name != childName) continue;
-                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, root.parent)) continue;
                 string text = SpeechService.Clean(tmp.text);
                 return string.IsNullOrEmpty(text) ? null : text;
             }
@@ -184,7 +184,7 @@ namespace Sleeptalker.Sleeper2
             if (root == null) return null;
             foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
             {
-                if (Util.AlphaUpTo(tmp.transform, root.parent) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, root.parent)) continue;
                 string text = SpeechService.Clean(tmp.text);
                 if (!string.IsNullOrEmpty(text) && text.Contains(fragment)) return text;
             }
@@ -226,7 +226,7 @@ namespace Sleeptalker.Sleeper2
 
         private static bool SkipTextNode(Transform t, Transform root)
         {
-            if (Util.AlphaUpTo(t, root.parent) < 0.05f) return true;
+            if (!Util.RenderedUp(t, root.parent)) return true;
             for (var cur = t; cur != null && cur != root.parent; cur = cur.parent)
             {
                 string n = cur.name;

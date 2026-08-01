@@ -239,11 +239,11 @@ namespace Sleeptalker.Sleeper2
             var sb = new System.Text.StringBuilder(ActionRow(card));
             var outcomes = card.Find("OUTCOMES") ?? FindDeep(card, "OUTCOMES");
             if (outcomes != null && outcomes.gameObject.activeInHierarchy
-                && Util.AlphaUpTo(outcomes) >= 0.05f)
+                && Util.RenderedUp(outcomes))
             {
                 foreach (var tmp in outcomes.GetComponentsInChildren<TMP_Text>(false))
                 {
-                    if (Util.AlphaUpTo(tmp.transform, outcomes) < 0.05f) continue;
+                    if (!Util.RenderedUp(tmp.transform, outcomes)) continue;
                     string t = SpeechService.Clean(tmp.text);
                     if (!string.IsNullOrEmpty(t)) sb.Append(' ').Append(t).Append('.');
                 }
@@ -407,11 +407,11 @@ namespace Sleeptalker.Sleeper2
         {
             var block = FindDeep(card, "PREDICTIVE");
             if (block == null || !block.gameObject.activeInHierarchy) return null;
-            if (Util.AlphaUpTo(block) < 0.05f) return null;
+            if (!Util.RenderedUp(block)) return null;
             var parts = new List<string>();
             foreach (var tmp in block.GetComponentsInChildren<TMP_Text>(false))
             {
-                if (Util.AlphaUpTo(tmp.transform, block) < 0.05f) continue;
+                if (!Util.RenderedUp(tmp.transform, block)) continue;
                 string t = SpeechService.Clean(tmp.text);
                 if (!string.IsNullOrEmpty(t)) parts.Add(t);
             }
