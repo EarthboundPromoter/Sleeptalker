@@ -61,8 +61,13 @@ namespace Sleeptalker.Sleeper2
         {
             if (_containersFresh) return Containers;
             Containers.Clear();
-            foreach (var t in Object.FindObjectsOfType<Transform>())
+            // INCLUDING inactive (ride V3 zone-table kill): the hub Locations
+            // container is deactivated on the rig side and during boot beats —
+            // a scan that runs in such a moment must still discover it. Activity
+            // and alpha are Build()-time filters; discovery is state-blind.
+            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
             {
+                if (!t.gameObject.scene.IsValid()) continue;
                 bool isContainer = false;
                 foreach (Transform child in t)
                 {
@@ -77,6 +82,8 @@ namespace Sleeptalker.Sleeper2
             _containersFresh = true;
             return Containers;
         }
+
+        private static float _lastSelfHeal = -10f;
 
         // The ride-V1 selection-based zone pick is DELETED (it flapped with hover
         // vs selection and broke the rig exit). Zone identity is dial-driven now:
@@ -110,6 +117,14 @@ namespace Sleeptalker.Sleeper2
                 }
             }
             nodes.Sort((a, b) => a.Azimuth.CompareTo(b.Azimuth));
+            // Self-heal (throttled): an empty zone on a live floor means the
+            // container cache is stale (destroyed transforms, additive-load
+            // timing) — rediscover rather than stay dead.
+            if (nodes.Count == 0 && Time.unscaledTime - _lastSelfHeal > 2f)
+            {
+                _lastSelfHeal = Time.unscaledTime;
+                _containersFresh = false;
+            }
             return nodes;
         }
 
