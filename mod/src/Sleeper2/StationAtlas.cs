@@ -206,10 +206,10 @@ namespace Sleeptalker.Sleeper2
             return string.IsNullOrEmpty(desc) ? null : desc;
         }
 
-        /// <summary>Billboard clock facet: presence by mechanism class (the uniform
-        /// billboard-clock FSM family, states Setter/Updating — census #027), content
-        /// from whatever text it renders. A clock that renders no text is presence-only
-        /// and logs for capture (transcode seam).</summary>
+        /// <summary>Billboard clock facet: presence by the clock FSM CLASS (the
+        /// ClockValue carrier — GameQueries.ClockFsm; ride V1 ruling: the class is
+        /// the variable, never a name or an inexact state signature). Content =
+        /// "x of y" from the clock's own dial, then any text it renders.</summary>
         public static bool ReadClock(Node node, List<string> texts)
         {
             texts.Clear();
@@ -219,19 +219,18 @@ namespace Sleeptalker.Sleeper2
             bool present = false;
             foreach (Transform child in billboard)
             {
-                var fsm = FsmWithStates(child, "Setter", "Updating");
-                if (fsm == null) continue;
                 if (!child.gameObject.activeInHierarchy) continue;
+                var clockFsm = GameQueries.ClockFsm(child);
+                if (clockFsm == null) continue;
                 present = true;
+                string progress = GameQueries.ClockProgress(clockFsm);
+                if (progress != null) texts.Add(progress);
                 foreach (var tmp in child.GetComponentsInChildren<TMP_Text>())
                 {
                     if (!tmp.gameObject.activeInHierarchy) continue;
                     string t = SpeechService.Clean(tmp.text);
                     if (!string.IsNullOrEmpty(t)) texts.Add(t);
                 }
-                if (texts.Count == 0)
-                    LogOnce("[Atlas] clock on " + node.Name
-                        + " renders no text — transcode capture needed");
             }
             return present;
         }

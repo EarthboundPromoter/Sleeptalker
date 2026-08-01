@@ -119,5 +119,59 @@ namespace Sleeptalker.Sleeper2
             _pauseCanvas = null;
             _diceSystems = null;
         }
+
+        // ---------- Clocks (the ClockValue FSM class) ----------
+        // Census 2026-07-31: 2,823 FSMs across 32 levels carry the variable
+        // ClockValue — "N Step Clock" (2,439), "N Step Accruing Clock" (192),
+        // "N Step Clock (Clamped Cycle Discovered)" (192), plus the zone billboard
+        // Setter/Updating Clock family. Owner ruling (CS1 lesson relearned): the
+        // CLASS is the variable, never the name — name-keyed detection missed the
+        // accruing/clamped variants entirely. Steps have no variable; the game
+        // authors them as the leading number of the class FSM's own owner name,
+        // uniform across all variants.
+
+        /// <summary>The clock-class FSM under a card/billboard element, by the
+        /// ClockValue variable it must carry. Null = not a clock.</summary>
+        public static PlayMakerFSM ClockFsm(Transform root)
+        {
+            if (root == null) return null;
+            foreach (var fsm in root.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                if (fsm.FsmVariables.GetFsmFloat("ClockValue") != null
+                    || fsm.FsmVariables.GetFsmInt("ClockValue") != null)
+                    return fsm;
+            }
+            return null;
+        }
+
+        /// <summary>"x of y" from a clock-class FSM: value = its own ClockValue,
+        /// steps = the leading number of its owner name. Bare value (logged once)
+        /// when the name carries no count.</summary>
+        public static string ClockProgress(PlayMakerFSM clockFsm)
+        {
+            if (clockFsm == null) return null;
+            float value;
+            var f = clockFsm.FsmVariables.GetFsmFloat("ClockValue");
+            if (f != null) value = f.Value;
+            else
+            {
+                var i = clockFsm.FsmVariables.GetFsmInt("ClockValue");
+                if (i == null) return null;
+                value = i.Value;
+            }
+            float steps = Util.LeadingInt(clockFsm.gameObject.name);
+            if (steps <= 0f)
+            {
+                if (_stepless.Add(clockFsm.gameObject.name))
+                    Plugin.Log.LogWarning("[Game] clock FSM \"" + clockFsm.gameObject.name
+                        + "\" carries no step count in its name — bare value spoken.");
+                return value.ToString("0.#");
+            }
+            return value.ToString("0.#") + " " + Scaffold.Lex.T("vitals.of")
+                + " " + steps.ToString("0");
+        }
+
+        private static readonly System.Collections.Generic.HashSet<string> _stepless =
+            new System.Collections.Generic.HashSet<string>();
     }
 }

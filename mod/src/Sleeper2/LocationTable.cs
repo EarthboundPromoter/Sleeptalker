@@ -138,7 +138,9 @@ namespace Sleeptalker.Sleeper2
             {
                 if (!child.gameObject.activeInHierarchy) continue;
                 if (StationAtlas.ActionIdentifierOf(child) != null) _actions.Add(child);
-                else if (Describe.TextUnder(child, "Clock Name") != null) _clocks.Add(child);
+                // Clock rows by FSM class (ClockValue carrier), never by rendered
+                // or object name — the CS1 invisible-clock lesson (owner, ride V1).
+                else if (GameQueries.ClockFsm(child) != null) _clocks.Add(child);
                 // else: connectors, notifications, stress meters, triggers — not rows.
             }
         }
@@ -415,37 +417,11 @@ namespace Sleeptalker.Sleeper2
             }
         }
 
-        /// <summary>Clock progress from the step clock's own ClockValue — the exact
-        /// CS1 variable name, live-captured on ride V1 with the owner's ground truth
-        /// (value 0 while a wrong-variable guess spoke 1; the guess-class read is
-        /// banned — exact name only). Steps from the element's own name
-        /// ("4 Step Clock"). Absent ClockValue = silent + capture log.</summary>
+        /// <summary>Progress via the shared clock-class query (GameQueries.ClockFsm /
+        /// ClockProgress — the ClockValue variable IS the class; ride V1 rulings:
+        /// exact variable, never a name key, never a contains-guess).</summary>
         private static string ClockProgress(Transform clock)
-        {
-            Transform stepClock = null;
-            foreach (var t in clock.GetComponentsInChildren<Transform>(false))
-                if (t.name.EndsWith("Step Clock")) { stepClock = t; break; }
-            if (stepClock == null) return null;
-            float steps = Util.LeadingInt(stepClock.name);
-            foreach (var fsm in stepClock.GetComponents<PlayMakerFSM>())
-            {
-                var f = fsm.FsmVariables.GetFsmFloat("ClockValue");
-                if (f != null)
-                    return f.Value.ToString("0.#")
-                        + (steps > 0f ? " " + Lex.T("vitals.of") + " " + steps.ToString("0") : "");
-                var i = fsm.FsmVariables.GetFsmInt("ClockValue");
-                if (i != null)
-                    return i.Value
-                        + (steps > 0f ? " " + Lex.T("vitals.of") + " " + steps.ToString("0") : "");
-            }
-            var inventory = new System.Text.StringBuilder();
-            foreach (var fsm in stepClock.GetComponents<PlayMakerFSM>())
-                foreach (var f in fsm.FsmVariables.FloatVariables)
-                    inventory.Append(f.Name).Append("; ");
-            LogOnce("[Location] step clock \"" + stepClock.name + "\" on " + clock.name
-                + " has no ClockValue var — capture needed. Floats: " + inventory);
-            return null;
-        }
+            => GameQueries.ClockProgress(GameQueries.ClockFsm(clock));
 
         // ---------- Plumbing ----------
 
