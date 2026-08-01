@@ -71,6 +71,10 @@ namespace Sleeptalker.Scaffold
                 { "map.section.controls", "Map controls." },
                 { "map.section.unknown", "Unmapped" },
                 { "map.blocked", "Blocked." },
+                { "map.blocked.fuel", "Not enough fuel." },
+                { "map.requires", "Requires" },
+                { "map.fuel-unit", "fuel." },
+                { "map.col.fuel", "Fuel" },
                 // Location (action view) table
                 { "loc.section.actions", "Action cards." },
                 { "loc.section.clocks", "Clock cards." },

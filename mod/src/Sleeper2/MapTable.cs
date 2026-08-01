@@ -95,12 +95,16 @@ namespace Sleeptalker.Sleeper2
                 Cell = ClockCell, EmptyKey = "zone.clock.none" },
             new Column { HeaderKey = "zone.col.drives",
                 Cell = DrivesCell, EmptyKey = "zone.drives.none" },
+            new Column { HeaderKey = "map.col.fuel",
+                Cell = FuelCell, EmptyKey = "zone.empty" },
             new Column { HeaderKey = "zone.col.description",
                 Cell = StationAtlas.ReadDescription, EmptyKey = "zone.desc.none" },
         };
 
         /// <summary>Existence-based Clock cell (owner amendment 2026-07-31, carried
-        /// from the zone table): the cell exists only when a rendered clock does.</summary>
+        /// from the zone table) and Fuel cell (owner ruling 2026-08-01, added on
+        /// the render evidence the v1 exclusion asked for): each cell exists only
+        /// when its fact renders/publishes.</summary>
         private static List<Column> ColumnsFor(StationAtlas.Node node)
         {
             var cols = new List<Column>(Columns.Length);
@@ -109,10 +113,34 @@ namespace Sleeptalker.Sleeper2
             {
                 if (column.HeaderKey == "zone.col.clock"
                     && !StationAtlas.ReadClock(node, scratch)) continue;
+                if (column.HeaderKey == "map.col.fuel"
+                    && FuelCostOf(node) == null) continue;
                 cols.Add(column);
             }
             return cols;
         }
+
+        /// <summary>The marker's published fuel cost (D8 (e): the pipeline FSM's
+        /// own Fuel Cost string / Fuel Cost Int — contract markers carry it from
+        /// the localization table, hub/belt markers from the distance compute;
+        /// the same value the Vector Display renders on select, which is the
+        /// render evidence the Fuel column was gated on). Null = no cost
+        /// published — the cell does not exist.</summary>
+        private static string FuelCostOf(StationAtlas.Node node)
+        {
+            if (node.Button == null) return null;
+            foreach (var fsm in node.Button.GetComponents<PlayMakerFSM>())
+            {
+                if (!HasStates(fsm, "Check Fuel", "Travel")) continue;
+                var s = fsm.FsmVariables.GetFsmString("Fuel Cost");
+                if (s != null && !string.IsNullOrEmpty(s.Value)) return s.Value.Trim();
+                var i = fsm.FsmVariables.GetFsmInt("Fuel Cost Int");
+                if (i != null && i.Value > 0) return i.Value.ToString();
+            }
+            return null;
+        }
+
+        private static string FuelCell(StationAtlas.Node node) => FuelCostOf(node);
 
         private static readonly TableEngine Table = new TableEngine
         {
@@ -312,27 +340,59 @@ namespace Sleeptalker.Sleeper2
                 if (fsm.ActiveStateName != "BLOCKED") continue;
                 if (!HasStates(fsm, "Check Fuel", "Travel")) continue; // pipeline class
                 _blockWatch = null;
-                var sb = new System.Text.StringBuilder(Lex.T("map.blocked"));
-                var display = GameQueries.MapRoot() != null
-                    ? GameQueries.MapRoot().Find("Vector Display") : null;
-                if (display != null && display.gameObject.activeInHierarchy)
-                {
-                    foreach (var tmp in display.GetComponentsInChildren<TMPro.TMP_Text>(false))
-                    {
-                        if (!Util.RenderedUp(tmp.transform)) continue;
-                        string text = SpeechService.Clean(tmp.text);
-                        if (string.IsNullOrEmpty(text)) continue;
-                        sb.Append(' ').Append(text).Append('.');
-                        Plugin.Log.LogInfo("[Map] BLOCKED render capture: \"" + text + "\"");
-                    }
-                }
-                else
-                {
-                    Plugin.Log.LogInfo("[Map] BLOCKED with no rendered Vector Display — capture");
-                }
-                Table.Say(sb.ToString());
+                Table.Say(BlockedSpeech(fsm));
                 return;
             }
+        }
+
+        /// <summary>Blocked-travel composition (owner ruling 2026-08-01): when
+        /// fuel was the reason — decided from the SAME variables the game's own
+        /// Check Fuel compared — restate the requirement: "Not enough fuel.
+        /// Requires N fuel." Hazard/unknown blocks keep the sanctioned generic
+        /// word plus whatever the Vector Display renders (raw-logged).</summary>
+        private static string BlockedSpeech(PlayMakerFSM fsm)
+        {
+            string cost = null;
+            var s = fsm.FsmVariables.GetFsmString("Fuel Cost");
+            if (s != null && !string.IsNullOrEmpty(s.Value)) cost = s.Value.Trim();
+            if (cost == null)
+            {
+                var ci = fsm.FsmVariables.GetFsmInt("Fuel Cost Int");
+                if (ci != null && ci.Value > 0) cost = ci.Value.ToString();
+            }
+            float? fuel = null;
+            var pf = fsm.FsmVariables.GetFsmFloat("Player Fuel");
+            if (pf != null) fuel = pf.Value;
+            else
+            {
+                var pi = fsm.FsmVariables.GetFsmInt("Player Fuel");
+                if (pi != null) fuel = pi.Value;
+            }
+
+            if (cost != null && fuel.HasValue
+                && float.TryParse(cost, out float costValue) && fuel.Value < costValue)
+                return Lex.T("map.blocked.fuel") + " " + Lex.T("map.requires")
+                    + " " + cost + " " + Lex.T("map.fuel-unit");
+
+            var sb = new System.Text.StringBuilder(Lex.T("map.blocked"));
+            var display = GameQueries.MapRoot() != null
+                ? GameQueries.MapRoot().Find("Vector Display") : null;
+            if (display != null && display.gameObject.activeInHierarchy)
+            {
+                foreach (var tmp in display.GetComponentsInChildren<TMPro.TMP_Text>(false))
+                {
+                    if (!Util.RenderedUp(tmp.transform)) continue;
+                    string text = SpeechService.Clean(tmp.text);
+                    if (string.IsNullOrEmpty(text)) continue;
+                    sb.Append(' ').Append(text).Append('.');
+                    Plugin.Log.LogInfo("[Map] BLOCKED render capture: \"" + text + "\"");
+                }
+            }
+            else
+            {
+                Plugin.Log.LogInfo("[Map] BLOCKED with no rendered Vector Display — capture");
+            }
+            return sb.ToString();
         }
 
         // ---------- Rows ----------
@@ -529,6 +589,10 @@ namespace Sleeptalker.Sleeper2
             if (drives.Count > 0)
                 sb.Append(' ').Append(Lex.T("zone.col.drives")).Append(": ")
                   .Append(string.Join(", ", drives.ToArray())).Append('.');
+            string fuel = FuelCostOf(node);
+            if (fuel != null)
+                sb.Append(' ').Append(Lex.T("map.col.fuel")).Append(": ")
+                  .Append(fuel).Append('.');
             string desc = StationAtlas.ReadDescription(node);
             if (!string.IsNullOrEmpty(desc)) sb.Append(' ').Append(desc).Append('.');
             return sb.ToString();
