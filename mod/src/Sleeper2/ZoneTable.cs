@@ -220,8 +220,13 @@ namespace Sleeptalker.Sleeper2
         private static void PanTo(StationAtlas.Node node)
         {
             _verifyTarget = null;
-            if (node.Button == null) return;
-            if (!GameQueries.CameraPanTo(node.Button.transform.position,
+            if (node.Button == null || node.Root == null) return;
+            // Anchor = the node ROOT (ride V4 live finding, 2026-08-01): the
+            // Location Button is billboard-DISPLACED at runtime (camera-facing
+            // tilt, ~400 z-units at Hexport) — panning to it lands one node
+            // short. The root is the stable authored transform, and it is what
+            // D17's per-node predictions verify against (Docks −1297 ✓ live).
+            if (!GameQueries.CameraPanTo(node.Root.position,
                 out bool outOfBand)) return;
             _verifyTarget = node;
             _verifyOutOfBand = outOfBand;
