@@ -65,8 +65,14 @@ namespace Sleeptalker.Sleeper2
 
         /// <summary>Full slot read for the title save/continue menu (census:
         /// MAIN MENU/Demo Menu/Slot Menu/Slot N — the "Demo Menu" name is a
-        /// wart; the slot FSMs compose Save Description Formatted and the slot
-        /// renders it as field texts). Null off the slot menu.</summary>
+        /// wart). Live anatomy (bridge capture 2026-08-01): flat name-paired
+        /// children — "Cycle Label"/"Cycle", "Class Label"/"Class", an EMPTY
+        /// child for unused slots — and hierarchy order interleaves the pairs
+        /// wrongly for speech (owner report). Composition is owner-ruled:
+        /// "CYCLE, number. CLASS, name." Unpaired rendered text still appends
+        /// (never silently dropped). Null off the slot menu.</summary>
+        private static readonly string[] SlotFields = { "Cycle", "Class" };
+
         private static string SaveSlotCard(GameObject go)
         {
             if (!Util.HasAncestor(go, "MAIN MENU")) return null;
@@ -79,8 +85,45 @@ namespace Sleeptalker.Sleeper2
             if (slot == null) return null;
 
             var sb = new System.Text.StringBuilder(slot.name).Append('.');
+            var consumed = new System.Collections.Generic.List<Transform>();
+
+            var empty = slot.Find("EMPTY");
+            if (empty != null && empty.gameObject.activeInHierarchy
+                && Util.RenderedUp(empty))
+            {
+                // Unused slot: the EMPTY child is the whole story.
+                AppendTexts(sb, empty);
+                consumed.Add(empty);
+            }
+            else
+            {
+                foreach (var field in SlotFields)
+                {
+                    var label = slot.Find(field + " Label");
+                    var value = slot.Find(field);
+                    string labelText = label != null && Util.RenderedUp(label)
+                        ? SpeechService.Clean(GetTmp(label)) : null;
+                    string valueText = value != null && Util.RenderedUp(value)
+                        ? SpeechService.Clean(GetTmp(value)) : null;
+                    if (label != null) consumed.Add(label);
+                    if (value != null) consumed.Add(value);
+                    if (string.IsNullOrEmpty(labelText) && string.IsNullOrEmpty(valueText))
+                        continue;
+                    sb.Append(' ')
+                      .Append(!string.IsNullOrEmpty(labelText) ? labelText : field)
+                      .Append(", ")
+                      .Append(valueText ?? "").Append('.');
+                }
+            }
+
+            // Anything rendered the pairing didn't cover still speaks.
             foreach (var tmp in slot.GetComponentsInChildren<TMP_Text>(false))
             {
+                bool skip = false;
+                foreach (var root in consumed)
+                    if (tmp.transform == root || tmp.transform.IsChildOf(root))
+                    { skip = true; break; }
+                if (skip) continue;
                 if (!Util.RenderedUp(tmp.transform)) continue;
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text)) continue;
@@ -88,6 +131,18 @@ namespace Sleeptalker.Sleeper2
                 if (!text.EndsWith(".")) sb.Append('.');
             }
             return sb.ToString();
+        }
+
+        private static void AppendTexts(System.Text.StringBuilder sb, Transform root)
+        {
+            foreach (var tmp in root.GetComponentsInChildren<TMP_Text>(false))
+            {
+                if (!Util.RenderedUp(tmp.transform)) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                sb.Append(' ').Append(text);
+                if (!text.EndsWith(".")) sb.Append('.');
+            }
         }
 
         /// <summary>Full metadata read for a difficulty button (child of the
