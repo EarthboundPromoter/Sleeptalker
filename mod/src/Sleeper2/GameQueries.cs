@@ -55,19 +55,37 @@ namespace Sleeptalker.Sleeper2
             }
         }
 
-        // ---------- Interim precedence dials (ride V1 state trap: the location
-        // table owned the keys under pause AND under dice allocation — Action View?
-        // stays true through both. These two dials are the stand-down set until the
-        // ModeModel carries the full CS1 precedence table.) ----------
+        // ---------- Mode dials (decoded D4/D7/D8/D9/D11; consumed by ModeModel) ----------
 
         private static Transform _pauseCanvas;
         private static PlayMakerFSM[] _diceSystems;
+        private static PlayMakerFSM _pauseFsm, _mapFsm, _shipFsm, _cycleFsm, _mainMenuFsm;
+        private static bool _mainMenuChecked;
 
-        /// <summary>Pause by render truth: the Pause Canvas's effective alpha (the
-        /// canvas object stays in the scene; screens hide by alpha — founding CS2
-        /// rule). Pause outranks every mod surface (CS1 precedence).</summary>
+        /// <summary>Title scene: the MAIN MENU FSM exists (level0 only; its state is
+        /// the screen dial TitleFlow/ClassSelect already ride).</summary>
+        public static bool TitleLive()
+        {
+            if (!_mainMenuChecked)
+            {
+                _mainMenuFsm = FindFsm("MAIN MENU");
+                _mainMenuChecked = true;
+            }
+            return _mainMenuFsm != null && _mainMenuFsm.gameObject != null;
+        }
+
+        /// <summary>Pause: the master PAUSE FSM off its Idle resting state (D7 —
+        /// it owns Esc, timescale, and every submenu; ActiveStateName is the
+        /// authoritative dial). Alpha read kept only as the missing-FSM fallback.</summary>
         public static bool Paused()
         {
+            if (_pauseFsm == null || _pauseFsm.gameObject == null)
+                _pauseFsm = FindFsm("PAUSE");
+            if (_pauseFsm != null)
+            {
+                string state = _pauseFsm.ActiveStateName;
+                return !string.IsNullOrEmpty(state) && state != "Idle";
+            }
             if (_pauseCanvas == null)
             {
                 var go = GameObject.Find("Pause Canvas");
@@ -75,6 +93,65 @@ namespace Sleeptalker.Sleeper2
                 if (_pauseCanvas == null) return false;
             }
             return Util.AlphaUpTo(_pauseCanvas) >= 0.05f;
+        }
+
+        /// <summary>Map open: the Map Screen root FSM in "Open" (D8; the top-bar
+        /// button and Rewired "Map" both just send Open to it).</summary>
+        public static bool MapOpen()
+        {
+            if (_mapFsm == null || _mapFsm.gameObject == null)
+                _mapFsm = FindFsm("Map Screen");
+            return _mapFsm != null && _mapFsm.ActiveStateName == "Open";
+        }
+
+        /// <summary>Map close: send the map root FSM its own Back event — exactly
+        /// what the Back Button FSM fires off Rewired Back (D8).</summary>
+        public static void MapBack()
+        {
+            if (_mapFsm == null || _mapFsm.gameObject == null)
+                _mapFsm = FindFsm("Map Screen");
+            if (_mapFsm != null) _mapFsm.SendEvent("Back");
+            else Plugin.Log.LogWarning("[Game] MapBack: no Map Screen FSM found");
+        }
+
+        /// <summary>Rig side: the Ship UI toggle FSM in "Idle Ship" (D9 — the same
+        /// button whose label flips RIG/EXPLORE; its own state is the dial).</summary>
+        public static bool RigSide()
+        {
+            if (_shipFsm == null || _shipFsm.gameObject == null)
+                _shipFsm = FindFsm("Ship UI", "Ship and Map Buttons");
+            return _shipFsm != null && _shipFsm.ActiveStateName == "Idle Ship";
+        }
+
+        /// <summary>The Ship UI toggle's own button — the designed rig exit.</summary>
+        public static GameObject ShipToggleButton()
+        {
+            if (_shipFsm == null || _shipFsm.gameObject == null)
+                _shipFsm = FindFsm("Ship UI", "Ship and Map Buttons");
+            if (_shipFsm == null) return null;
+            var button = _shipFsm.transform.Find("Button");
+            return button != null ? button.gameObject : null;
+        }
+
+        /// <summary>Cycle transitioning: the Cycle Controller off Idle. Its rest
+        /// state has FOUR exits in CS2 (player end-cycle, travel, narrative
+        /// auto-cycle, permadeath — D4); any departure is the transition wrapper.</summary>
+        public static bool CycleTransitioning()
+        {
+            if (_cycleFsm == null || _cycleFsm.gameObject == null)
+                _cycleFsm = FindFsm("Cycle Controller");
+            if (_cycleFsm == null) return false;
+            string state = _cycleFsm.ActiveStateName;
+            return !string.IsNullOrEmpty(state) && state != "Idle";
+        }
+
+        /// <summary>Travel ride: Current Location Scene prefix "TRN" (D9 — the
+        /// master scene dial, stamped by every scene's setup FSM).</summary>
+        public static bool TravelScene()
+        {
+            var v = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                .GetFsmString("Current Location Scene");
+            return v != null && v.Value != null && v.Value.StartsWith("TRN");
         }
 
         /// <summary>Dice allocation engaged: ANY of the three gamepad dice systems
@@ -118,6 +195,12 @@ namespace Sleeptalker.Sleeper2
         {
             _pauseCanvas = null;
             _diceSystems = null;
+            _pauseFsm = null;
+            _mapFsm = null;
+            _shipFsm = null;
+            _cycleFsm = null;
+            _mainMenuFsm = null;
+            _mainMenuChecked = false;
         }
 
         // ---------- Clocks (the ClockValue FSM class) ----------
@@ -130,13 +213,18 @@ namespace Sleeptalker.Sleeper2
         // authors them as the leading number of the class FSM's own owner name,
         // uniform across all variants.
 
-        /// <summary>The clock-class FSM under a card/billboard element, by the
-        /// ClockValue variable it must carry. Null = not a clock.</summary>
+        /// <summary>The RENDERED clock-class FSM under a card/billboard element, by
+        /// the ClockValue variable it must carry. Clock cards hold dormant sibling
+        /// variant FSMs (a 3-step accruing AND an 8-step clamped under one card —
+        /// census; ride V1's zero-storm read them), so only an ACTIVE, effectively
+        /// VISIBLE carrier counts. Null = no rendered clock here.</summary>
         public static PlayMakerFSM ClockFsm(Transform root)
         {
             if (root == null) return null;
-            foreach (var fsm in root.GetComponentsInChildren<PlayMakerFSM>(true))
+            foreach (var fsm in root.GetComponentsInChildren<PlayMakerFSM>(false))
             {
+                if (!fsm.gameObject.activeInHierarchy) continue;
+                if (Util.AlphaUpTo(fsm.transform) < 0.05f) continue;
                 if (fsm.FsmVariables.GetFsmFloat("ClockValue") != null
                     || fsm.FsmVariables.GetFsmInt("ClockValue") != null)
                     return fsm;

@@ -78,50 +78,31 @@ namespace Sleeptalker.Sleeper2
             return Containers;
         }
 
-        /// <summary>The container the game's own focus is in — the render-truth
-        /// zone pick when several containers are active at once (hub under the rig
-        /// overlay, ride V1). Selection's container wins; the camera selector's
-        /// closest pick is the fallback; null = no signal (serve all).</summary>
-        public static Transform CurrentContainer()
-        {
-            var selected = UnityEngine.EventSystems.EventSystem.current != null
-                ? UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject : null;
-            var byFocus = ContainerOf(selected);
-            if (byFocus != null) return byFocus;
-            return ContainerOf(ClosestButton());
-        }
-
-        private static Transform ContainerOf(GameObject go)
-        {
-            if (go == null) return null;
-            foreach (var container in FindContainers())
-                if (container != null && go.transform.IsChildOf(container))
-                    return container;
-            return null;
-        }
-
-        /// <summary>True when the live zone is the rig's room container (interim
-        /// dial — the RIG view global stays false in this state, live-verified;
-        /// decode D9 will supply the proper mode machinery).</summary>
-        public static bool InRigContainer()
-        {
-            var container = CurrentContainer();
-            return container != null
-                && Util.PathOf(container.gameObject).Contains("Rig UI");
-        }
+        // The ride-V1 selection-based zone pick is DELETED (it flapped with hover
+        // vs selection and broke the rig exit). Zone identity is dial-driven now:
+        // the game deactivates the hub Locations container on the rig side (D9),
+        // Build() is alpha-honest (the Map Screen keeps its containers active but
+        // alpha-hidden — object presence is never screen presence), and the
+        // RigSide dial filters the story states where both sides stay active.
 
         /// <summary>Fresh node list, azimuth-sorted (walking Down travels one way
         /// around the station). Unlisted dial states are excluded and logged.</summary>
         public static List<Node> Build()
         {
             var nodes = new List<Node>();
-            // Zone = the focus-picked container when there is one (rig rooms over
-            // hub nodes under the overlay); all active containers otherwise.
-            var current = CurrentContainer();
+            bool rigSide = GameQueries.RigSide();
             foreach (var container in FindContainers())
             {
                 if (container == null || !container.gameObject.activeInHierarchy) continue;
-                if (current != null && container != current) continue;
+                // Render truth: an alpha-hidden container is not on screen (the
+                // closed Map Screen keeps its marker containers active — ride V1's
+                // phantom rows and zero clocks).
+                if (Util.AlphaUpTo(container) < 0.05f) continue;
+                string path = Util.PathOf(container.gameObject);
+                // The map's containers belong to the future map table, never this one.
+                if (path.Contains("Map Screen")) continue;
+                // Zone by dial (D9): rig side serves rig rooms; station side never does.
+                if (rigSide != path.Contains("Rig UI")) continue;
                 foreach (Transform root in container)
                 {
                     var node = NodeOf(root);

@@ -76,8 +76,12 @@ namespace Sleeptalker.Sleeper2
                     return;
             }
 
+            // The top-bar V table: an excursion above the zone/location tables
+            // (owner ruling 2026-07-31 — the whole bar walkable, buttons included).
+            if (TopBarTable.HandleKeys()) return;
+
             // Action view: the location table owns the keys — the D4 stacked grid
-            // (its Active() and the zone table's are the same dial, opposite signs).
+            // (mode-gated by the ModeModel).
             if (LocationTable.Active() && LocationTable.HandleKeys()) return;
 
             // Open-station mode: the zone table owns arrows and Enter — the atlas
@@ -97,60 +101,61 @@ namespace Sleeptalker.Sleeper2
 
             if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
+            if (Input.GetKeyDown(KeyCode.F1)) { SpeakHelp(); return; }
             if (Input.GetKeyDown(KeyCode.F3)) { Diag.IncidentDump("F3"); return; }
         }
 
-        /// <summary>Backspace = the designed cancel, resolved per mode (CS1
-        /// ResolveCancel idiom; the full ladder arrives with the ModeModel). First
-        /// rung, ride V1 finding: the action view had no keyboard way out. The
-        /// game's own out is the Leave button — a GameObject-typed global holds it
-        /// (port-audit §7b) — so Backspace clicks exactly what a pointer would.</summary>
+        /// <summary>Backspace = the designed cancel, resolved by the ModeModel
+        /// (CS1 ResolveCancel shape; every rung a decoded designed input —
+        /// D8/D9/D11). A press is never swallowed: rungs that find nothing fall
+        /// to the next mode's designed out.</summary>
         private static void ResolveCancel()
         {
-            // Above-the-table floors first. Pause keeps the game's own Esc path.
-            if (GameQueries.Paused())
+            switch (ModeModel.Current())
             {
-                Plugin.Log.LogInfo("[Input] Backspace under pause: no rung (Esc is native)");
-                return;
-            }
-            // Dice allocation: mirror the game's own Back polls (D11 §4) — retract
-            // a held/resting die or close the picker. Nothing engaged = fall
-            // through to the view rung (a press must never be swallowed).
-            if (GameQueries.DiceAllocationLive() && DiceFlow.CancelRung())
-                return;
-            var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                .GetFsmBool("Action View?");
-            if (actionView != null && actionView.Value)
-            {
-                var leave = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                    .GetFsmGameObject("Leave Button");
-                if (leave != null && leave.Value != null && leave.Value.activeInHierarchy)
-                {
-                    Navigator.Click(leave.Value);
+                case Mode.Pause:
+                    // The pause menu's own Back/Esc machinery is native.
+                    Plugin.Log.LogInfo("[Input] Backspace under pause: Esc path is native");
                     return;
-                }
-                Plugin.Log.LogWarning(
-                    "[Input] action view up but no live Leave Button global — cancel path capture needed");
-                SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
-                return;
-            }
-            // Rig rooms (ride V1): the designed exit is the top bar's Ship toggle —
-            // RIG in, EXPLORE out (one object, dynamic label, glyph B). The RIG view
-            // global stays false in this state, so the zone container is the dial.
-            if (StationAtlas.InRigContainer())
-            {
-                var ship = GameObject.Find("Letterbox Canvas/Top UI/Ship and Map Buttons/Ship UI/Button");
-                if (ship != null)
-                {
-                    Navigator.Click(ship);
+
+                case Mode.DiceAllocation:
+                    // Mirror the game's Back polls (D11 §4); nothing engaged =
+                    // fall through to the action-view rung.
+                    if (DiceFlow.CancelRung()) return;
+                    goto case Mode.ActionView;
+
+                case Mode.Map:
+                    // The map's own close is the Back event (D8: Back Button FSM
+                    // fires it off Rewired Back; same event, same target).
+                    GameQueries.MapBack();
                     return;
-                }
-                Plugin.Log.LogWarning("[Input] rig container but no Ship UI button — capture needed");
-                SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
-                return;
+
+                case Mode.ActionView:
+                    var leave = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                        .GetFsmGameObject("Leave Button");
+                    if (leave != null && leave.Value != null && leave.Value.activeInHierarchy)
+                    {
+                        Navigator.Click(leave.Value);
+                        return;
+                    }
+                    Plugin.Log.LogWarning(
+                        "[Input] action view up but no live Leave Button global — capture needed");
+                    SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
+                    return;
+
+                case Mode.RigRooms:
+                    // The designed rig exit: the Ship toggle (Idle Ship side, D9).
+                    var ship = GameQueries.ShipToggleButton();
+                    if (ship != null) { Navigator.Click(ship); return; }
+                    Plugin.Log.LogWarning("[Input] rig side but no Ship toggle button — capture needed");
+                    SpeechService.Say(Lex.T("cancel.none"), Priority.Immediate, "nav");
+                    return;
+
+                default:
+                    Plugin.Log.LogInfo("[Input] Backspace: no cancel rung in mode "
+                        + ModeModel.Name());
+                    return;
             }
-            // Other modes: no cancel rung yet (skeleton) — log, stay silent.
-            Plugin.Log.LogInfo("[Input] Backspace: no cancel path in this mode yet");
         }
 
         private static readonly KeyCode[] ModKeys =
@@ -160,7 +165,7 @@ namespace Sleeptalker.Sleeper2
             // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
-            KeyCode.Z, KeyCode.F3,
+            KeyCode.V, KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
         };
@@ -170,6 +175,31 @@ namespace Sleeptalker.Sleeper2
             foreach (var key in ModKeys)
                 if (Input.GetKeyDown(key)) return true;
             return false;
+        }
+
+        /// <summary>F1 — contextual help (CS1 KeyScope idiom, minimal form): the
+        /// current mode and the keys live on it. Grows into the full KeyScope
+        /// table as surfaces accumulate.</summary>
+        private static void SpeakHelp()
+        {
+            var mode = ModeModel.Current();
+            string keys;
+            switch (mode)
+            {
+                case Mode.Station:
+                case Mode.RigRooms:
+                case Mode.ActionView:
+                    keys = Lex.T(TopBarTable.Entered ? "help.topbar" : "help.table");
+                    break;
+                case Mode.Tutorial: keys = Lex.T("help.tutorial"); break;
+                case Mode.Conversation: keys = Lex.T("help.conversation"); break;
+                case Mode.DiceAllocation: keys = Lex.T("help.dice"); break;
+                case Mode.Map: keys = Lex.T("help.map"); break;
+                case Mode.Pause: keys = Lex.T("help.native"); break;
+                default: keys = Lex.T("help.native"); break;
+            }
+            SpeechService.Say(Lex.T("mode." + mode.ToString().ToLowerInvariant())
+                + ". " + keys, Priority.Immediate, "query");
         }
 
         /// <summary>CS1 idiom: response buttons are named "Response: " + rendered text.

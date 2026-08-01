@@ -110,24 +110,14 @@ namespace Sleeptalker.Sleeper2
             };
         }
 
-        /// <summary>The table owns arrows/Enter in open-station mode: gameplay HUD
-        /// up (atlas has nodes), no conversation, no tutorial, no action view.
-        /// Gates re-verify per ride; each is the game's own dial.</summary>
+        /// <summary>The table owns arrows/Enter on the zone floors — Station and
+        /// RigRooms (rig rooms ARE zone nodes, D9). One authority decides
+        /// everything above (ModeModel; the ride-V1 scattered-gate era is over).</summary>
         public static bool Active()
         {
-            if (ConversationEvents.ConversationActive) return false;
-            if (TutorialReader.Active()) return false;
-            // Pause outranks everything (CS1 precedence; ride V1 state trap —
-            // the same hole the location table had).
-            if (GameQueries.Paused()) return false;
-            var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                .GetFsmBool("Action View?");
-            if (actionView != null && actionView.Value) return false;
-            // Rig overlay: its own surface owns the keys and the station camera
-            // is parked (Focus FSM Disabled, live capture 2026-07-26).
-            var rigView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                .GetFsmBool("RIG view");
-            if (rigView != null && rigView.Value) return false;
+            var mode = ModeModel.Current();
+            if (mode != Mode.Station && mode != Mode.RigRooms) return false;
+            if (TopBarTable.Entered) return false; // V-table excursion owns the keys
             return Nodes().Count > 0;
         }
 

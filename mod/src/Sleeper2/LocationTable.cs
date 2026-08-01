@@ -65,28 +65,15 @@ namespace Sleeptalker.Sleeper2
             Source = "location",
         };
 
-        /// <summary>The view's own dial: Action View? global. True through pause and
-        /// dice allocation — presence of the SURFACE, not ownership of the KEYS.</summary>
-        private static bool ViewUp()
-        {
-            var actionView = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                .GetFsmBool("Action View?");
-            return actionView != null && actionView.Value;
-        }
-
-        /// <summary>Key ownership: view up AND nothing above it holds the floor.
-        /// Ride V1 state trap: pause and dice allocation both keep Action View?
-        /// true — without these stand-downs the table consumed arrows under the
-        /// pause menu and stole focus back from the die picker. Overlays are
-        /// excursions, not exits (CS1 D3): suspension keeps the cursor; only the
-        /// view itself closing resets it (see Tick).</summary>
+        /// <summary>Key ownership via the ModeModel: this table IS the ActionView
+        /// floor; everything above it (pause, tutorial, conversation, dice
+        /// allocation, map) outranks by precedence, not by scattered checks.
+        /// Overlays are excursions, not exits (CS1 D3): suspension keeps the
+        /// cursor; only the view itself closing resets it (see Tick).</summary>
         public static bool Active()
         {
-            if (!ViewUp()) return false;
-            if (ConversationEvents.ConversationActive) return false;
-            if (TutorialReader.Active()) return false;
-            if (GameQueries.Paused()) return false;
-            if (GameQueries.DiceAllocationLive()) return false;
+            if (ModeModel.Current() != Mode.ActionView) return false;
+            if (TopBarTable.Entered) return false; // V-table excursion
             return true;
         }
 
@@ -112,7 +99,7 @@ namespace Sleeptalker.Sleeper2
         {
             // Reset only when the VIEW closes — pause/allocation/conversation are
             // excursions and keep the cursor (CS1 D3 ruling).
-            if (!ViewUp() && _entered)
+            if (!ModeModel.ActionViewUp() && _entered)
             {
                 _entered = false;
                 _group = null;

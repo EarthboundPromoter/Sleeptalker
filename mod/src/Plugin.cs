@@ -62,9 +62,8 @@ namespace Sleeptalker
             ElementDescriber.Element = Describe.Element;
             NavSignals.UserNavigated = FocusPatch.NoteUserNavigation;
             NavSignals.ClearCooldown = FocusPatch.ClearCooldown;
-            Diag.ModeNameProvider = () => ConversationEvents.ConversationActive
-                ? (DialogueState.MenuOpen ? "choices" : "dialogue")
-                : "ui";
+            // The real ModeModel (2026-07-31) — the 3-value stub is retired.
+            Diag.ModeNameProvider = ModeModel.Name;
             Diag.StateProvider = DiagState;
             Diag.FsmRecentProvider = n =>
             {
@@ -92,6 +91,7 @@ namespace Sleeptalker
             TutorialReader.Init();
             ZoneTable.Init();
             DiceFlow.Init();
+            TopBarTable.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -106,6 +106,7 @@ namespace Sleeptalker
             TutorialReader.Tick();
             ZoneTable.Tick();
             LocationTable.Tick();
+            TopBarTable.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
