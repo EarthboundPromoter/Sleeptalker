@@ -126,6 +126,11 @@ namespace Sleeptalker.Sleeper2
             // announce their consequences; the F3 ring captures the states themselves.
         }
 
+        // Lane classification (owner law — render first, backing second):
+        // slot counts RENDER AS TEXT on the Amount element itself → the text is
+        // the value; the Value variable is the logged backing. Stress/energy/
+        // crew/glitch bars render as FILLS with no number → their driving FSM
+        // variables are the sanctioned practical lane (documented here).
         private static void RegisterSlot(string lexKey, string slotName)
         {
             Register(new Channel
@@ -135,9 +140,26 @@ namespace Sleeptalker.Sleeper2
                 Match = fsm => fsm.transform.parent != null
                     && fsm.transform.parent.name.TrimEnd() == slotName,
                 UpdateStates = new[] { "Updating" },
-                Value = fsm => FloatVar(fsm, "Value"),
+                Value = fsm => RenderedNumber(fsm) ?? FloatVar(fsm, "Value"),
                 Max = SiblingLimit,
             });
+        }
+
+        /// <summary>The number the slot actually draws — its own TMP text.</summary>
+        private static float? RenderedNumber(PlayMakerFSM fsm)
+        {
+            var tmp = fsm.GetComponent<TMPro.TMP_Text>();
+            if (tmp == null) return null;
+            string text = SpeechService.Clean(tmp.text);
+            if (string.IsNullOrEmpty(text)) return null;
+            float n = Util.LeadingInt(text);
+            if (n <= 0f && text.Trim() != "0")
+            {
+                LogOnce("[Vitals] slot text \"" + text + "\" on "
+                    + fsm.transform.parent.name + " parses to no number — Value var backing");
+                return null;
+            }
+            return n;
         }
 
         private static void Register(Channel ch)
