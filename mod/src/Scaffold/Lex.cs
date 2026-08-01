@@ -90,6 +90,10 @@ namespace Sleeptalker.Scaffold
                 { "topbar.closed", "Closed." },
                 { "topbar.empty", "Top bar not available." },
                 { "topbar.button-suffix", " button." },
+                { "topbar.row.vitals", "Vitals." },
+                { "topbar.row.buttons", "Buttons." },
+                { "topbar.row.dice", "Dice." },
+                { "topbar.row-empty", "Nothing here." },
                 // Modes (F1)
                 { "mode.title", "Title screen" },
                 { "mode.pause", "Pause menu" },

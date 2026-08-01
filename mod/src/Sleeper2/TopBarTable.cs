@@ -23,65 +23,116 @@ namespace Sleeptalker.Sleeper2
     /// table owns the floor beneath — that table's cursor is untouched.</summary>
     internal static class TopBarTable
     {
-        private sealed class Row
+        private struct Cell
         {
-            public Func<string> Speech;          // null/empty = row not rendered now
-            public Func<GameObject> Commit;      // null = readout row
+            public string Speech;
+            public GameObject Target;   // null = readout cell
         }
 
         public static bool Entered { get; private set; }
 
-        private static readonly List<Row> Registry = new List<Row>();
-        private static readonly List<Row> Live = new List<Row>();
+        // Three fixed rows (owner ruling 2026-07-31): vitals | buttons | dice.
+        private const int RowVitals = 0, RowButtons = 1, RowDice = 2;
+        private static readonly List<Cell> CellCache = new List<Cell>();
+        private static int _cachedRow = -1;
         private static float _builtAt = -1f;
 
         private static readonly TableEngine Table = new TableEngine
         {
-            Rows = () => Rows().Count,
-            Cols = _ => 1,
-            RowSpeech = (r, c) => Speak(r),
-            CellSpeech = (r, c) => Speak(r),
-            Detail = (r, c) => Table.Say(Speak(r)),
-            Commit = (r, c) => DoCommit(r),
+            Rows = () => 3,
+            Cols = row => Cells(row).Count,
+            RowSpeech = (r, c) => RowLine(r),
+            CellSpeech = (r, c) => CellLine(r, c),
+            Detail = (r, c) => Table.Say(RowLine(r)),
+            Commit = (r, c) => DoCommit(r, c),
             EmptyRow = () => Lex.T("topbar.empty"),
+            EmptyCol = () => Lex.T("topbar.empty"),
             EmptyCommit = () => Lex.T("topbar.empty"),
             Source = "query",
+            // The CS1 UI-bar idiom: cells start on the first Left/Right; the
+            // column resets on every row switch.
+            ColReset = -1,
+            ResetColOnRowChange = true,
         };
 
-        public static void Init()
+        public static void Init() { }
+
+        private static readonly string[] RowKeys =
+            { "topbar.row.vitals", "topbar.row.buttons", "topbar.row.dice" };
+
+        private static List<Cell> Cells(int row)
         {
-            // Vitals channels — one row each, current readout (render-clock truth).
-            for (int i = 0; i < 10; i++)
+            if (_cachedRow == row && Time.unscaledTime - _builtAt <= 0.4f)
+                return CellCache;
+            _cachedRow = row;
+            _builtAt = Time.unscaledTime;
+            CellCache.Clear();
+            switch (row)
             {
-                int index = i;
-                Registry.Add(new Row { Speech = () => VitalsLine(index) });
+                case RowVitals:
+                    foreach (var line in Vitals.Read())
+                        CellCache.Add(new Cell { Speech = line });
+                    break;
+                case RowButtons:
+                    AddButton(GameQueries.ShipToggleButton());
+                    AddButton(FindButton(
+                        "Letterbox Canvas/Top UI/Ship and Map Buttons/Map UI/Button"));
+                    // Contextual third cell: the Leave/Continue button when the
+                    // bar renders one (flagged to owner — strike if unwanted).
+                    AddButton(LeaveButton());
+                    break;
+                case RowDice:
+                    for (int n = 1; n <= 5; n++)
+                    {
+                        string line = DieLine(n);
+                        if (line != null) CellCache.Add(new Cell { Speech = line });
+                    }
+                    break;
             }
+            return CellCache;
+        }
 
-            // Dice tray — one row per rendered die (D11 read idiom).
-            for (int i = 1; i <= 5; i++)
+        private static void AddButton(GameObject button)
+        {
+            string line = ButtonLine(button);
+            if (line != null) CellCache.Add(new Cell { Speech = line, Target = button });
+        }
+
+        /// <summary>Row arrival: the row's name, then every cell joined — the CS1
+        /// full-row read.</summary>
+        private static string RowLine(int row)
+        {
+            var cells = Cells(row);
+            if (cells.Count == 0)
+                return Lex.T(RowKeys[Mathf.Clamp(row, 0, 2)]) + " " + Lex.T("topbar.row-empty");
+            var sb = new System.Text.StringBuilder(Lex.T(RowKeys[Mathf.Clamp(row, 0, 2)]));
+            foreach (var cell in cells) sb.Append(' ').Append(cell.Speech);
+            return sb.ToString();
+        }
+
+        private static string CellLine(int row, int col)
+        {
+            var cells = Cells(row);
+            if (col < 0 || col >= cells.Count) return Lex.T("topbar.empty");
+            return cells[col].Speech;
+        }
+
+        private static void DoCommit(int row, int col)
+        {
+            var cells = Cells(row);
+            if (col < 0 || col >= cells.Count)
             {
-                int n = i;
-                Registry.Add(new Row { Speech = () => DieLine(n) });
+                Table.Say(RowLine(row)); // row level: repeat, never a blind click
+                return;
             }
-
-            // Buttons — rendered label + role, Enter clicks the game's own button.
-            Registry.Add(new Row
+            var target = cells[col].Target;
+            if (target == null)
             {
-                Speech = () => ButtonLine(GameQueries.ShipToggleButton()),
-                Commit = GameQueries.ShipToggleButton,
-            });
-            Registry.Add(new Row
-            {
-                Speech = () => ButtonLine(FindButton(
-                    "Letterbox Canvas/Top UI/Ship and Map Buttons/Map UI/Button")),
-                Commit = () => FindButton(
-                    "Letterbox Canvas/Top UI/Ship and Map Buttons/Map UI/Button"),
-            });
-            Registry.Add(new Row
-            {
-                Speech = () => ButtonLine(LeaveButton()),
-                Commit = LeaveButton,
-            });
+                Table.Say(cells[col].Speech); // readout cell: Enter repeats
+                return;
+            }
+            Exit(false); // the click's own consequences speak
+            Navigator.Click(target);
         }
 
         /// <summary>The floors this excursion may sit on. Anything else claiming
@@ -125,14 +176,9 @@ namespace Sleeptalker.Sleeper2
         {
             Entered = true;
             _builtAt = -1f;
+            _cachedRow = -1;
             Table.Reset();
-            if (Rows().Count == 0)
-            {
-                Table.Say(Lex.T("topbar.empty"));
-                Exit(false);
-                return;
-            }
-            Table.Say(Lex.T("topbar.title") + " " + Speak(0));
+            Table.Say(Lex.T("topbar.title") + " " + RowLine(RowVitals));
         }
 
         private static void Exit(bool announce)
@@ -140,52 +186,6 @@ namespace Sleeptalker.Sleeper2
             Entered = false;
             if (announce)
                 SpeechService.Say(Lex.T("topbar.closed"), Priority.Immediate, "query");
-        }
-
-        // ---------- Rows ----------
-
-        private static List<Row> Rows()
-        {
-            if (Time.unscaledTime - _builtAt > 0.4f)
-            {
-                Live.Clear();
-                foreach (var row in Registry)
-                {
-                    string s;
-                    try { s = row.Speech(); }
-                    catch { s = null; }
-                    if (!string.IsNullOrEmpty(s)) Live.Add(row);
-                }
-                _builtAt = Time.unscaledTime;
-            }
-            return Live;
-        }
-
-        private static string Speak(int row)
-        {
-            var rows = Rows();
-            if (row < 0 || row >= rows.Count) return Lex.T("topbar.empty");
-            return rows[row].Speech() ?? Lex.T("topbar.empty");
-        }
-
-        private static void DoCommit(int row)
-        {
-            var rows = Rows();
-            if (row < 0 || row >= rows.Count) return;
-            var target = rows[row].Commit != null ? rows[row].Commit() : null;
-            if (target == null)
-            {
-                Table.Say(Speak(row)); // readout row: Enter repeats (CS1 idiom)
-                return;
-            }
-            Exit(false); // the click's own consequences speak
-            Navigator.Click(target);
-        }
-
-        private static string VitalsLine(int index)
-        {
-            var lines = Vitals.Read();
-            return index < lines.Count ? lines[index] : null;
         }
 
         /// <summary>Per-die row from the tray's own Die FSM (DiceValue face; 9 IS
