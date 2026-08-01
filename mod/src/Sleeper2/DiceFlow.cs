@@ -166,9 +166,13 @@ namespace Sleeptalker.Sleeper2
         /// (DragReset), slots reset, systems Back (the ButtonUp half that re-arms
         /// the picker after a retract — sync review MED-7: sending only the slot
         /// half closed the picker instead of reopening it).</summary>
+        private static string _lastRungSignature;
+        private static float _lastRungAt = -10f;
+
         public static bool CancelRung()
         {
             bool sent = false;
+            var signature = new System.Text.StringBuilder();
             foreach (var fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
             {
                 if (fsm == null || fsm.gameObject == null) continue;
@@ -182,6 +186,7 @@ namespace Sleeptalker.Sleeper2
                     {
                         fsm.SendEvent("Reset");
                         sent = true;
+                        signature.Append(fsm.GetInstanceID()).Append(':').Append(state).Append(';');
                     }
                 }
                 else if (name.StartsWith("Dice Cursor"))
@@ -190,6 +195,7 @@ namespace Sleeptalker.Sleeper2
                     {
                         fsm.SendEvent("DragReset");
                         sent = true;
+                        signature.Append(fsm.GetInstanceID()).Append(':').Append(state).Append(';');
                     }
                 }
             }
@@ -202,11 +208,29 @@ namespace Sleeptalker.Sleeper2
                 {
                     system.SendEvent("Back");
                     sent = true;
+                    signature.Append(system.GetInstanceID()).Append(':').Append(state).Append(';');
                 }
             }
             if (!sent)
+            {
                 Plugin.Log.LogInfo("[Dice] Backspace: no engaged slot/system — falling through");
-            return sent;
+                return false;
+            }
+            // Repeat guard (ride finding, cantine item slot): firing the exact
+            // same events into the exact same unmoved states twice in a beat
+            // means the events aren't landing — fall through to the next rung
+            // instead of walling the player (a press is NEVER swallowed twice
+            // by the same wall). The miss is a capture.
+            string sig = signature.ToString();
+            if (sig == _lastRungSignature && Time.unscaledTime - _lastRungAt < 1.5f)
+            {
+                Plugin.Log.LogWarning("[Dice] cancel rung repeated with no state change ("
+                    + sig + ") — falling through, capture needed");
+                return false;
+            }
+            _lastRungSignature = sig;
+            _lastRungAt = Time.unscaledTime;
+            return true;
         }
 
         private static Transform FindDeep(Transform root, string name)

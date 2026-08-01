@@ -124,19 +124,19 @@ namespace Sleeptalker.Sleeper2
                     Plugin.Log.LogInfo("[Input] Backspace under pause: Esc path is native");
                     return;
 
-                case Mode.DiceAllocation:
-                    // Mirror the game's Back polls (D11 §4); nothing engaged =
-                    // fall through to the action-view rung.
-                    if (DiceFlow.CancelRung()) return;
-                    goto case Mode.ActionView;
-
                 case Mode.Map:
                     // The map's own close is the Back event (D8: Back Button FSM
                     // fires it off Rewired Back; same event, same target).
                     GameQueries.MapBack();
                     return;
 
+                case Mode.DiceAllocation:
                 case Mode.ActionView:
+                    // Slot rungs FIRST on both floors (ride finding: an ITEM-cost
+                    // slot rests in Slot Item without engaging the dice systems —
+                    // mode stays ActionView, Leave is deactivated by the resting
+                    // engagement, and only the slot's own Reset frees it. D11 §4).
+                    if (DiceFlow.CancelRung()) return;
                     var leave = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                         .GetFsmGameObject("Leave Button");
                     if (leave != null && leave.Value != null && leave.Value.activeInHierarchy)
