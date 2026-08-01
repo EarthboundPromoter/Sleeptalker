@@ -62,6 +62,14 @@ namespace Sleeptalker.Scaffold
                 { "zone.desc.none", "none." },
                 { "zone.section.rooms", "Rooms." },
                 { "zone.section.ops", "Ship operations." },
+                // Map table
+                { "map.empty", "No markers here." },
+                { "map.here", "You are here." },
+                { "map.plane.belt", "Belt view." },
+                { "map.plane.contracts", " contracts." },
+                { "map.section.suffix", " sector." },
+                { "map.section.controls", "Map controls." },
+                { "map.section.unknown", "Unmapped" },
                 // Location (action view) table
                 { "loc.section.actions", "Action cards." },
                 { "loc.section.clocks", "Clock cards." },
@@ -128,7 +136,7 @@ namespace Sleeptalker.Scaffold
                 { "help.tutorial", "Up and Down walk the text, Enter continues." },
                 { "help.conversation", "Numbers pick choices, Up and Down move, Enter confirms, B reads the log." },
                 { "help.dice", "Arrows move between dice, Enter picks, Backspace takes back or closes." },
-                { "help.map", "Arrows move between markers, Enter selects, Backspace closes the map." },
+                { "help.map", "Arrows walk the markers, Left and Right browse facets, Space full row, Enter commits travel, M or Backspace closes the map." },
                 { "help.native", "Arrows and Enter, game controls." },
                 { "help.journal", "Up and Down walk drives, Left and Right browse cells, Enter performs the cell, Slash swaps tabs, J or Backspace closes." },
                 // Drive journal

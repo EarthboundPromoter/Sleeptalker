@@ -36,6 +36,7 @@ namespace Sleeptalker.Sleeper2
             public GameObject Button;    // Marker/Location Button (may be inactive)
             public Transform CamFocus;   // authored per-node camera target (may be null)
             public float Azimuth;        // marker angle around the rig center (deg)
+            public bool IsHere;          // map: root FSM in Occupied — the current location (D8)
         }
 
         // CS1 baseline whitelist; CS2 states join per capture (unknowns log).
@@ -128,28 +129,71 @@ namespace Sleeptalker.Sleeper2
             return nodes;
         }
 
+        // ---------- Map planes (D8; the map table's provider seam) ----------
+
+        /// <summary>The ACTIVE map plane (D8 zone-pick rule): belt = Zoomed Out
+        /// Map UI, rendered only in belt view; local = the one raised (rendered
+        /// AND interactable) "&lt;sector&gt; Contracts" container — the Scroll View
+        /// FSM guarantees exactly one; two at once logs loudly. Belt wins when
+        /// both read up. Null = map closed or mid-transition (the Trans beat).</summary>
+        public static Transform ActiveMapPlane()
+        {
+            Transform belt = null, sector = null;
+            foreach (var container in FindContainers())
+            {
+                if (container == null || !container.gameObject.activeInHierarchy) continue;
+                string path = Util.PathOf(container.gameObject);
+                if (!path.Contains("Map Screen")) continue;
+                if (!Util.RenderedUp(container)) continue;
+                if (container.name == "Zoomed Out Map UI") { belt = container; continue; }
+                var group = container.GetComponent<CanvasGroup>();
+                if (group != null && !group.interactable) continue;
+                if (sector == null) sector = container;
+                else LogOnce("[Atlas] two raised sector planes at once: "
+                    + sector.name + " and " + container.name + " — capture");
+            }
+            return belt != null ? belt : sector;
+        }
+
+        /// <summary>Map-plane nodes (the map table's provider): same billboard
+        /// anatomy, same dial whitelist, plus Occupied as the you-are-here row
+        /// (D8 — the marker hides its button and parks the ship on itself; it
+        /// still renders). No azimuth order — the map table sorts by the map's
+        /// own geometry.</summary>
+        public static List<Node> BuildMapNodes(Transform plane)
+        {
+            var nodes = new List<Node>();
+            if (plane == null) return nodes;
+            CollectNodes(plane, nodes, 0, true);
+            return nodes;
+        }
+
         /// <summary>Nodes from a container INCLUDING one level of FSM-less grouping
         /// transforms ("RIG one shots" — the CS1 Post Rim Gate lesson relearned
         /// live 2026-07-31: real nodes nest under groupers).</summary>
-        private static void CollectNodes(Transform parent, List<Node> nodes, int depth)
+        private static void CollectNodes(Transform parent, List<Node> nodes, int depth,
+            bool map = false)
         {
             foreach (Transform child in parent)
             {
-                var node = NodeOf(child);
+                var node = NodeOf(child, map);
                 if (node != null) { nodes.Add(node); continue; }
                 if (depth < 1 && child.gameObject.activeInHierarchy
                     && child.Find("Location Contents") == null && child.childCount > 0)
-                    CollectNodes(child, nodes, depth + 1);
+                    CollectNodes(child, nodes, depth + 1, map);
             }
         }
 
-        private static Node NodeOf(Transform root)
+        private static Node NodeOf(Transform root, bool map = false)
         {
             var fsm = root.GetComponent<PlayMakerFSM>();
             string state = fsm != null ? fsm.ActiveStateName : null;
             var billboard = root.Find("Location Contents/Billboard Elements");
             if (billboard == null) return null; // not a location node
-            if (state == null || !Listed.Contains(state))
+            // Occupied is map-only vocabulary (D8): the current location's marker —
+            // included as a non-actionable you-are-here row, never on the station.
+            bool occupied = map && state == "Occupied";
+            if (state == null || (!Listed.Contains(state) && !occupied))
             {
                 if (state != null && LoggedStates.Add(state))
                     Plugin.Log.LogWarning("[Atlas] UNLISTED DIAL STATE (excluded): \""
@@ -166,7 +210,7 @@ namespace Sleeptalker.Sleeper2
             if (button == null) return null;
 
             var pos = marker.position;
-            var center = RigCenter();
+            var center = map ? null : RigCenter(); // the station rig is not the map's frame
 
             return new Node
             {
@@ -180,6 +224,7 @@ namespace Sleeptalker.Sleeper2
                 Azimuth = center != null
                     ? Mathf.Atan2(pos.y - center.position.y, pos.z - center.position.z) * Mathf.Rad2Deg
                     : 0f,
+                IsHere = occupied,
             };
         }
 

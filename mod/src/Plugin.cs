@@ -82,6 +82,7 @@ namespace Sleeptalker
                 StationAtlas.InvalidateScene();
                 GameQueries.InvalidateScene();
                 ZoneTable.OnSceneChanged();
+                MapTable.OnSceneChanged();
                 JournalTable.InvalidateScene();
             };
 
@@ -92,6 +93,7 @@ namespace Sleeptalker
             Vitals.Init();
             TutorialReader.Init();
             ZoneTable.Init();
+            MapTable.Init();
             DiceFlow.Init();
             TopBarTable.Init();
             ActionOutcomes.Init();
@@ -109,6 +111,7 @@ namespace Sleeptalker
             ClassSelect.Tick();
             TutorialReader.Tick();
             ZoneTable.Tick();
+            MapTable.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();
             ActionOutcomes.Tick();

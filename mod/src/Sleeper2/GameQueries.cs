@@ -115,36 +115,89 @@ namespace Sleeptalker.Sleeper2
                 && _mapFsm.ActiveStateName == "Open";
         }
 
-        /// <summary>Map close: the map's sub-windows (Travel Confirm / Leave
-        /// Contract / Abandon — forced-focus dialogs, D8) own Back while they
-        /// render; only with none up does Back go to the root FSM (sync review
-        /// MED-10: a root Back under a live confirm would close the map beneath
-        /// the dialog).</summary>
-        private static readonly string[] MapSubWindows =
-            { "Travel Confirm Window", "Leave Contract Window", "Abandon Window" };
-
-        public static void MapBack()
+        /// <summary>The Map Screen root transform (Belt Button lookup, sub-window
+        /// walks). Null when the FSM is absent from the scene.</summary>
+        public static Transform MapRoot()
         {
             if (!_mapChecked)
             {
                 _mapFsm = FindFsm("Map Screen");
                 _mapChecked = true;
             }
-            if (_mapFsm == null || _mapFsm.gameObject == null)
+            return _mapFsm != null && _mapFsm.gameObject != null
+                ? _mapFsm.transform : null;
+        }
+
+        /// <summary>A native map sub-window is up: Travel Confirm / Crew Window /
+        /// "Crew Confrim" (sic — wart registry) / Leave Contract / No Pilot /
+        /// Ship Damaged — all forced-focus dialogs, direct children of the Map
+        /// Screen root, hidden by the alpha idiom (D8; the nested Abandon Window
+        /// rides under Leave Contract). While one renders the map table stands
+        /// down and the native focus reads carry it. Blockers first — they sit
+        /// on top of everything.</summary>
+        private static readonly string[] MapSubWindowsAll =
+        {
+            "No Pilot Window", "Ship Damaged Window",
+            "Travel Confirm Window", "Leave Contract Window",
+            "Crew Window", "Crew Confrim",
+        };
+
+        public static bool MapSubWindowUp()
+        {
+            var root = MapRoot();
+            if (root == null) return false;
+            foreach (var name in MapSubWindowsAll)
+                if (ChildRendered(root, name) != null) return true;
+            return false;
+        }
+
+        /// <summary>Map close: window-first Back ownership (sync review MED-10:
+        /// a root Back under a live dialog would close the map beneath it).
+        /// The crew stages belong to the Travel Confirm FSM — it owns every
+        /// stage of the travel dialog and Back at any stage returns Back to
+        /// the marker FSM (D8; sync pass F1 — the crew windows themselves
+        /// carry no Back ownership). Blockers get Back on their own FSM; an
+        /// unhandled event drops harmlessly (PlayMaker semantics, ride item).</summary>
+        public static void MapBack()
+        {
+            var root = MapRoot();
+            if (root == null)
             {
                 Plugin.Log.LogWarning("[Game] MapBack: no Map Screen FSM found");
                 return;
             }
-            foreach (var name in MapSubWindows)
+            if (ChildRendered(root, "Crew Window") != null
+                || ChildRendered(root, "Crew Confrim") != null)
             {
-                var window = FindFsm(name);
-                if (window == null || window.gameObject == null) continue;
-                if (!window.gameObject.activeInHierarchy) continue;
-                if (!Util.RenderedUp(window.transform)) continue;
-                window.SendEvent("Back");
+                var confirm = root.Find("Travel Confirm Window");
+                var confirmFsm = confirm != null
+                    ? confirm.GetComponent<PlayMakerFSM>() : null;
+                if (confirmFsm != null) { confirmFsm.SendEvent("Back"); return; }
+                Plugin.Log.LogWarning(
+                    "[Game] MapBack: crew stage up but no Travel Confirm FSM — capture");
+            }
+            foreach (var name in MapSubWindowsAll)
+            {
+                var window = ChildRendered(root, name);
+                if (window == null) continue;
+                var fsm = window.GetComponent<PlayMakerFSM>();
+                if (fsm == null)
+                {
+                    Plugin.Log.LogWarning("[Game] MapBack: window \"" + name
+                        + "\" carries no FSM — capture");
+                    continue;
+                }
+                fsm.SendEvent("Back");
                 return;
             }
-            _mapFsm.SendEvent("Back");
+            if (_mapFsm != null) _mapFsm.SendEvent("Back");
+        }
+
+        private static Transform ChildRendered(Transform root, string name)
+        {
+            var t = root.Find(name);
+            if (t == null || !t.gameObject.activeInHierarchy) return null;
+            return Util.RenderedUp(t) ? t : null;
         }
 
         /// <summary>Rig side: the Ship UI toggle FSM in "Idle Ship" (D9 — the same

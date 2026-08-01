@@ -91,6 +91,12 @@ namespace Sleeptalker.Sleeper2
             }
             if (ModeModel.Current() == Mode.DriveLog && JournalTable.HandleKeys()) return;
 
+            // Map mode: the map table owns arrows/Enter over the marker planes
+            // (spec: before native fallthrough). Native forced-focus sub-windows
+            // (Travel Confirm, Crew, Leave Contract, blockers) stand it down via
+            // the Active gate — their focus reads carry them (D8).
+            if (MapTable.Active() && MapTable.HandleKeys()) return;
+
             // Action view: the location table owns the keys — the D4 stacked grid
             // (mode-gated by the ModeModel).
             if (LocationTable.Active() && LocationTable.HandleKeys()) return;

@@ -103,6 +103,14 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
 
+            // Map-table select-follow: same suppression, map flavor — the table
+            // already spoke the row; the selection it sets is the follow, not news.
+            if (MapTable.SuppressMarkerFocus(selected))
+            {
+                Plugin.Log.LogInfo("[Focus] map-follow echo suppressed: " + selected.name);
+                return;
+            }
+
             bool userInitiated = Time.unscaledTime < _userMoveExpires;
 
             if (!userInitiated && !_sceneSettled)
