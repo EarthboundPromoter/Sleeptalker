@@ -47,6 +47,25 @@ namespace Sleeptalker.Sleeper2
 
         private static readonly Dictionary<PlayMakerFSM, Pending> Pendings =
             new Dictionary<PlayMakerFSM, Pending>();
+        // The CS1 ResourceWatch handoff (owner direction, ride V5): deltas the
+        // standing-down vitals lane observed during this resolution — the
+        // PRIMARY state math; render effect lines cover only what no watched
+        // channel owns (items, unwatched bodies).
+        private static readonly List<string> _offeredDeltas = new List<string>();
+        private static readonly HashSet<string> _offeredBodies = new HashSet<string>();
+
+        /// <summary>"Cryo up 15, now 21." — composed exactly as CS1's
+        /// ResourceWatch line, from the watched change the vitals channel
+        /// handed over instead of discarding under the two-lane rule.</summary>
+        public static void OfferDelta(string label, float delta, string nowFormatted)
+        {
+            if (Mathf.Approximately(delta, 0f) || string.IsNullOrEmpty(label)) return;
+            string sign = Lex.T(delta > 0 ? "vitals.up" : "vitals.down");
+            _offeredDeltas.Add(label + " " + sign + " "
+                + Mathf.Abs(Mathf.RoundToInt(delta))
+                + ", " + Lex.T("outcome.now") + " " + nowFormatted + ".");
+            _offeredBodies.Add(label.ToUpperInvariant());
+        }
         private static Dictionary<Transform, string> _clockSnapshot;
         private static float _lastReadAt = -10f;
 
@@ -102,6 +121,8 @@ namespace Sleeptalker.Sleeper2
                     ? name + ": " + Lex.T(tierKey)
                     : name + ".",
                 Priority.Queued, "outcome");
+            _offeredDeltas.Clear();
+            _offeredBodies.Clear();
             Pendings[fsm] = new Pending
             {
                 Name = name,
@@ -180,13 +201,27 @@ namespace Sleeptalker.Sleeper2
                 Plugin.Log.LogInfo("[Outcome] card for '" + p.Name
                     + "' gone and not re-found in the active variant — narrative silent.");
             }
+            // Watched-state deltas FIRST (the CS1 ResourceWatch composition —
+            // amount + new total, handed over by the standing-down channels).
+            foreach (var line in _offeredDeltas)
+            {
+                if (sb.Length > 0) sb.Append(' ');
+                sb.Append(line);
+            }
             if (effects != null)
             {
-                if (effects.Count == 0)
+                if (effects.Count == 0 && _offeredDeltas.Count == 0)
                     Plugin.Log.LogInfo("[Outcome] '" + p.Name
-                        + "' settled with no rendered effect lines (retried once).");
+                        + "' settled with no effects from render OR watch (retried once).");
                 foreach (var (delta, bodyWord) in effects)
                 {
+                    // Render lines only for bodies no watched channel already
+                    // spoke (items and unwatched meters) — never double-tell.
+                    bool covered = false;
+                    string bodyUpper = bodyWord.ToUpperInvariant();
+                    foreach (var owned in _offeredBodies)
+                        if (bodyUpper.Contains(owned)) { covered = true; break; }
+                    if (covered) continue;
                     if (sb.Length > 0) sb.Append(' ');
                     sb.Append(delta);
                     string now = Vitals.CurrentFor(bodyWord);
@@ -195,6 +230,8 @@ namespace Sleeptalker.Sleeper2
                     sb.Append('.');
                 }
             }
+            _offeredDeltas.Clear();
+            _offeredBodies.Clear();
             foreach (var change in LocationTable.ClockChanges(_clockSnapshot))
             {
                 if (sb.Length > 0) sb.Append(' ');

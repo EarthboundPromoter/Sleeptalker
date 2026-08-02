@@ -189,6 +189,13 @@ namespace Sleeptalker.Sleeper2
             // silently instead of double-speaking.
             if (ActionOutcomes.ResolutionInFlight || CycleGate.TransitionInFlight)
             {
+                // CS1 ResourceWatch shape (owner direction, ride V5): the
+                // observed change is HANDED to the outcome lane, never
+                // discarded — amount + new total compose into the utterance.
+                float before = ch.LastSpoken.Value;
+                if (ActionOutcomes.ResolutionInFlight)
+                    ActionOutcomes.OfferDelta(NameOf(ch, fsm),
+                        value - before, Format(value, ch.Max(fsm)));
                 ch.LastSpoken = value;
                 Plugin.Log.LogInfo("[Vitals] stood down (interaction lane): "
                     + NameOf(ch, fsm) + " -> " + value);
