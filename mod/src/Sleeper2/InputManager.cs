@@ -52,14 +52,39 @@ namespace Sleeptalker.Sleeper2
                     return;
             }
 
+            // Unified dialogue column (owner design 2026-08-01, D19): Up from
+            // the live conversation walks the transcript back (window scrolls
+            // with it); Down returns to the frontier; Enter in history re-reads.
+            // The frontier itself keeps the SHIPPED native grammar below.
+            if (ConversationEvents.ConversationActive && !TutorialReader.Active())
+            {
+                if (Input.GetKeyDown(KeyCode.UpArrow) && DialogueColumn.InHistory
+                    == false && !DialogueState.MenuOpen && DialogueColumn.Up()) return;
+                if (DialogueColumn.InHistory)
+                {
+                    if (Input.GetKeyDown(KeyCode.UpArrow)) { DialogueColumn.Up(); return; }
+                    if (Input.GetKeyDown(KeyCode.DownArrow)) { DialogueColumn.Down(); return; }
+                    if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                        && DialogueColumn.EnterKey()) return;
+                }
+            }
+
             if (DialogueState.MenuOpen && !TutorialReader.Active())
             {
                 for (int i = 0; i < 9 && i < DialogueState.CurrentResponses.Count; i++)
                 {
                     if (Input.GetKeyDown(KeyCode.Alpha1 + i)) { PickResponse(i); return; }
                 }
+                // Up at the TOP of the choice list crosses into history (the
+                // no-barrier rule): the native remap otherwise owns the axis.
                 if (Input.GetKeyDown(KeyCode.DownArrow)) { Navigator.Move(MoveDirection.Right); return; }
-                if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Left); return; }
+                if (Input.GetKeyDown(KeyCode.UpArrow))
+                {
+                    var before = Navigator.Current();
+                    Navigator.Move(MoveDirection.Left);
+                    if (Navigator.Current() == before) DialogueColumn.Up();
+                    return;
+                }
             }
 
             // Class select (owner design): Up/Down walk the class card rows with a

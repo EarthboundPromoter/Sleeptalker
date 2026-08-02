@@ -33,6 +33,9 @@ namespace Sleeptalker.Scaffold
                 { "prompt.unknown", "(glyph)" },
                 // Cancel resolution
                 { "cancel.none", "No back path here." },
+                // Dialogue column
+                { "dlg.frontier", "Latest. Enter continues." },
+                { "dlg.frontier-choices", "Choices." },
                 // Skill-check odds and resolution
                 { "odds.percent", "percent" },
                 { "odds.positive", "positive" },
@@ -158,7 +161,7 @@ namespace Sleeptalker.Scaffold
                 { "rig.unavailable", "Rig toggle not available here." },
                 { "help.topbar", "Up and Down walk the bar, Enter presses buttons, V or Backspace closes." },
                 { "help.tutorial", "Up and Down walk the text, Enter continues." },
-                { "help.conversation", "Numbers pick choices, Up and Down move, Enter confirms, B reads the log." },
+                { "help.conversation", "Numbers pick choices, Up and Down move — Up past the top walks back through the conversation, Down returns to the latest — Enter confirms." },
                 { "help.dice", "Arrows move between dice, Enter picks, Backspace takes back or closes." },
                 { "help.map", "Arrows walk the markers, Left and Right browse facets, Space full row, Enter commits travel, M or Backspace closes the map." },
                 { "help.native", "Arrows and Enter, game controls." },

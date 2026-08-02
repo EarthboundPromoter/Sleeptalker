@@ -119,6 +119,7 @@ namespace Sleeptalker
             TopBarTable.Tick();
             ActionOutcomes.Tick();
             JournalTable.Tick();
+            DialogueColumn.Tick();
             Navigator.Tick();
             SpeechService.Tick();
             ConversationEvents.Tick();
