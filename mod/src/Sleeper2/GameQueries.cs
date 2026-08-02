@@ -200,6 +200,61 @@ namespace Sleeptalker.Sleeper2
             return Util.RenderedUp(t) ? t : null;
         }
 
+        // ---------- Character window (D18) ----------
+
+        private static PlayMakerFSM _characterFsm;
+        private static bool _characterChecked;
+
+        /// <summary>Character window open: the Character UI Button FSM in "Open"
+        /// (D18 — the game's own tutorial trigger polls exactly this dial).</summary>
+        public static bool CharacterOpen()
+        {
+            if (!_characterChecked)
+            {
+                _characterFsm = FindFsm("Character UI Button");
+                _characterChecked = true;
+            }
+            if (_characterFsm == null || _characterFsm.gameObject == null) return false;
+            if (!_characterFsm.gameObject.activeInHierarchy) return false; // freeze guard
+            // "Highlight 2" is the open-window HOVER state (sync pass F3: a
+            // mouse resting on the top-bar button must not collapse the mode).
+            string state = _characterFsm.ActiveStateName;
+            return state == "Open" || state == "Highlight 2";
+        }
+
+        /// <summary>The shared Upgrade Confirm Window renders (alpha idiom) —
+        /// forced-focus dialog; the character table stands down under it.</summary>
+        public static bool CharacterConfirmUp()
+        {
+            var screen = GameObject.Find("Letterbox Canvas/Character Screen");
+            var window = screen != null
+                ? screen.transform.Find("Upgrade Confirm Window") : null;
+            if (window == null || !window.gameObject.activeInHierarchy) return false;
+            return Util.RenderedUp(window);
+        }
+
+        /// <summary>Character close: confirm window first (its own Back), else
+        /// the lifecycle FSM's toggle event (D18: Back and the toggle both
+        /// route Open→Close while the window is open).</summary>
+        public static void CharacterBack()
+        {
+            var screen = GameObject.Find("Letterbox Canvas/Character Screen");
+            var window = screen != null
+                ? screen.transform.Find("Upgrade Confirm Window") : null;
+            if (window != null && window.gameObject.activeInHierarchy
+                && Util.RenderedUp(window))
+            {
+                var fsm = window.GetComponent<PlayMakerFSM>();
+                if (fsm != null) { fsm.SendEvent("Back"); return; }
+            }
+            if (!_characterChecked)
+            {
+                _characterFsm = FindFsm("Character UI Button");
+                _characterChecked = true;
+            }
+            if (_characterFsm != null) _characterFsm.SendEvent("Open");
+        }
+
         /// <summary>Rig side: the Ship UI toggle FSM in "Idle Ship" (D9 — the same
         /// button whose label flips RIG/EXPLORE; its own state is the dial).</summary>
         public static bool RigSide()
@@ -302,6 +357,8 @@ namespace Sleeptalker.Sleeper2
             _shipFsm = null;
             _cycleFsm = null;
             _mainMenuFsm = null;
+            _characterFsm = null;
+            _characterChecked = false;
             _mainMenuChecked = _pauseChecked = _mapChecked = _shipChecked = _cycleChecked = false;
             _focusFsm = null;
             _focusChecked = false;

@@ -84,6 +84,10 @@ namespace Sleeptalker.Sleeper2
             // Scrollbars carry no information.
             if (selected.GetComponent<UnityEngine.UI.Scrollbar>() != null) return;
 
+            // Invisible gamepad focus anchors (map + character window, D8/D18):
+            // pure selection parking, nothing rendered to speak.
+            if (selected.name == "Gamepad Selection Button") return;
+
             // CS1: the game re-selects Continue after every dialogue advance — never
             // informative. CS2 dialogue path is the same DS layer; carried, verify live.
             if (selected.name == "Continue Button") return;

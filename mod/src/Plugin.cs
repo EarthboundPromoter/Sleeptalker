@@ -94,6 +94,7 @@ namespace Sleeptalker
             TutorialReader.Init();
             ZoneTable.Init();
             MapTable.Init();
+            CharacterTable.Init();
             DiceFlow.Init();
             TopBarTable.Init();
             ActionOutcomes.Init();
@@ -112,6 +113,7 @@ namespace Sleeptalker
             TutorialReader.Tick();
             ZoneTable.Tick();
             MapTable.Tick();
+            CharacterTable.Tick();
             GuideReader.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();

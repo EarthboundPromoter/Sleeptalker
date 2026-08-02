@@ -127,6 +127,10 @@ namespace Sleeptalker.Sleeper2
             // the Active gate — their focus reads carry them (D8).
             if (MapTable.Active() && MapTable.HandleKeys()) return;
 
+            // Character window: the skills + push table owns the keys; the
+            // shared Upgrade Confirm Window stands it down (native focus).
+            if (CharacterTable.Active() && CharacterTable.HandleKeys()) return;
+
             // Action view: the location table owns the keys — the D4 stacked grid
             // (mode-gated by the ModeModel).
             if (LocationTable.Active() && LocationTable.HandleKeys()) return;
@@ -201,6 +205,11 @@ namespace Sleeptalker.Sleeper2
                     // The map's own close is the Back event (D8: Back Button FSM
                     // fires it off Rewired Back; same event, same target).
                     GameQueries.MapBack();
+                    return;
+
+                case Mode.Character:
+                    // Confirm window first, else the lifecycle toggle (D18).
+                    GameQueries.CharacterBack();
                     return;
 
                 case Mode.DriveLog:
@@ -302,6 +311,7 @@ namespace Sleeptalker.Sleeper2
                 case Mode.Conversation: keys = Lex.T("help.conversation"); break;
                 case Mode.DiceAllocation: keys = Lex.T("help.dice"); break;
                 case Mode.Map: keys = Lex.T("help.map"); break;
+                case Mode.Character: keys = Lex.T("help.character"); break;
                 case Mode.DriveLog: keys = Lex.T("help.journal"); break;
                 case Mode.Pause:
                     keys = Lex.T(OptionsReview.IsActive() ? "help.options"
