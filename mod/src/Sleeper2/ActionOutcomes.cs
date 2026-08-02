@@ -38,11 +38,11 @@ namespace Sleeptalker.Sleeper2
             public Transform Card;
             public Transform GroupParent;
             public float Deadline;
-            // Effect deltas stashed AT THE OUTCOME SIGNAL (ride finding: the
-            // effect render tears down before the controller rests — capture
-            // before teardown, the CS1 doctrine). Body word kept for the
-            // rest-time state suffix.
-            public List<(string delta, string body)> Effects;
+            // One settle-retry (owner ruling + D14, 2026-08-01: effects are read
+            // at the SETTLED state, never stashed at signal — the toast rows
+            // fade in over 0.17s and hold ~4.3s, so signal-time capture read
+            // alpha 0 and found nothing; there is no teardown to race).
+            public bool Retried;
         }
 
         private static readonly Dictionary<PlayMakerFSM, Pending> Pendings =
@@ -108,7 +108,6 @@ namespace Sleeptalker.Sleeper2
                 Card = card,
                 GroupParent = card != null && card.parent != null ? card.parent.parent : null,
                 Deadline = Time.unscaledTime + 2f,
-                Effects = card != null ? CaptureEffects(card) : null,
             };
         }
 
@@ -137,18 +136,38 @@ namespace Sleeptalker.Sleeper2
             {
                 var p = Pendings[fsm];
                 Pendings.Remove(fsm);
-                Plugin.Log.LogWarning("[Outcome] controller for '" + p.Name
-                    + "' never rested — deadline read (rest-state capture needed)");
+                // D14 correction: big cards REST IN their outcome state (no
+                // exit to Idle) — the deadline IS the normal settle path.
+                Plugin.Log.LogInfo("[Outcome] '" + p.Name
+                    + "' settle read at deadline (rests-in-outcome family)");
                 ReadContent(p);
             }
         }
 
         private static void ReadContent(Pending p)
         {
-            _lastReadAt = Time.unscaledTime;
             var card = p.Card != null && p.Card.gameObject.activeInHierarchy
                 ? p.Card
                 : ReFind(p.GroupParent, p.Name);
+
+            // Settled read (owner ruling): everything — narrative, effect lines,
+            // totals — from the card AS IT RESTS. A fast-resting card can beat
+            // the 0.17s toast fade-in once; retry the settle read a beat later
+            // rather than speak an effect-less outcome (fail-loud on the second
+            // miss: the log then says whether this action truly has no effects).
+            var effects = card != null ? CaptureEffects(card) : null;
+            if (card != null && (effects == null || effects.Count == 0) && !p.Retried)
+            {
+                var key = card.GetComponentInChildren<PlayMakerFSM>(true);
+                if (key != null)
+                {
+                    p.Retried = true;
+                    p.Deadline = Time.unscaledTime + 0.5f;
+                    Pendings[key] = p; // the deadline sweep re-runs the settle read
+                    return;
+                }
+            }
+            _lastReadAt = Time.unscaledTime;
 
             var sb = new System.Text.StringBuilder();
             if (card != null)
@@ -161,11 +180,12 @@ namespace Sleeptalker.Sleeper2
                 Plugin.Log.LogInfo("[Outcome] card for '" + p.Name
                     + "' gone and not re-found in the active variant — narrative silent.");
             }
-            // Deltas from the capture, states from NOW (owner ruling: gain/loss,
-            // then the resulting bar state — bars have settled by rest time).
-            if (p.Effects != null)
+            if (effects != null)
             {
-                foreach (var (delta, bodyWord) in p.Effects)
+                if (effects.Count == 0)
+                    Plugin.Log.LogInfo("[Outcome] '" + p.Name
+                        + "' settled with no rendered effect lines (retried once).");
+                foreach (var (delta, bodyWord) in effects)
                 {
                     if (sb.Length > 0) sb.Append(' ');
                     sb.Append(delta);

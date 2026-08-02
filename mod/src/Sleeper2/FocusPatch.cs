@@ -88,6 +88,12 @@ namespace Sleeptalker.Sleeper2
             // pure selection parking, nothing rendered to speak.
             if (selected.name == "Gamepad Selection Button") return;
 
+            // Post-resolution slot landing (D14: the slot FSM re-selects its own
+            // Gamepad Dice Slot a few frames after the outcome — a designed
+            // parking, not news; it must not interject in the outcome utterance).
+            if (selected.name == "Gamepad Dice Slot" && ActionOutcomes.ResolutionInFlight)
+                return;
+
             // CS1: the game re-selects Continue after every dialogue advance — never
             // informative. CS2 dialogue path is the same DS layer; carried, verify live.
             if (selected.name == "Continue Button") return;
