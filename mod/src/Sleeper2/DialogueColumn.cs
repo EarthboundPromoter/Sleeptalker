@@ -72,8 +72,10 @@ namespace Sleeptalker.Sleeper2
             }
             _cursor = -1;
             ScrollTo(1f, toBottom: true);
-            SpeechService.Say(Lex.T(DialogueState.MenuOpen
-                ? "dlg.frontier-choices" : "dlg.frontier"), Priority.Immediate, "nav");
+            // No extra frontier line (owner ruling): re-announce the actual
+            // element — the Continue button or the selected choice — as normal.
+            var go = Navigator.Current();
+            if (go != null) Navigator.Select(go);
             return true;
         }
 

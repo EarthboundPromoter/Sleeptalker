@@ -99,8 +99,15 @@ namespace Sleeptalker.Sleeper2
             {
                 foreach (var field in SlotFields)
                 {
-                    var label = slot.Find(field + " Label");
-                    var value = slot.Find(field);
+                    // Name-TOLERANT matching (ride V5: Slot 2/3 children carry
+                    // clone-suffixed names — prefix match, Label discriminates).
+                    Transform label = null, value = null;
+                    foreach (Transform child in slot)
+                    {
+                        if (!child.name.StartsWith(field)) continue;
+                        if (child.name.Contains("Label")) { if (label == null) label = child; }
+                        else if (value == null) value = child;
+                    }
                     string labelText = label != null && Util.RenderedUp(label)
                         ? SpeechService.Clean(GetTmp(label)) : null;
                     string valueText = value != null && Util.RenderedUp(value)

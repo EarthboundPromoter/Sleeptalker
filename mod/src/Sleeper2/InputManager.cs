@@ -206,6 +206,7 @@ namespace Sleeptalker.Sleeper2
             // where the buttons render (dead elsewhere, KeyScope idiom).
             if (Input.GetKeyDown(KeyCode.M)) { MapKey(); return; }
             if (Input.GetKeyDown(KeyCode.G)) { RigKey(); return; }
+            if (Input.GetKeyDown(KeyCode.U)) { CharacterKey(); return; }
 
             if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
@@ -282,7 +283,7 @@ namespace Sleeptalker.Sleeper2
             // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
-            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.Slash,
+            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.U, KeyCode.Slash,
             KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
@@ -306,6 +307,18 @@ namespace Sleeptalker.Sleeper2
             if (button != null) { Navigator.Click(button); return; }
             Plugin.Log.LogWarning("[Input] M: no Map button on this floor");
             SpeechService.Say(Lex.T("map.unavailable"), Priority.Immediate, "nav");
+        }
+
+        /// <summary>U = the character/skills/upgrade window (owner key ruling,
+        /// ride V5): the lifecycle FSM's own toggle event, both directions —
+        /// same scoping as M (dead off the gameplay floors).</summary>
+        private static void CharacterKey()
+        {
+            var mode = ModeModel.Current();
+            if (mode == Mode.Character) { GameQueries.CharacterBack(); return; }
+            if (mode != Mode.Station && mode != Mode.RigRooms && mode != Mode.ActionView)
+                return;
+            GameQueries.CharacterBack(); // the toggle event opens from Idle too
         }
 
         private static void RigKey()

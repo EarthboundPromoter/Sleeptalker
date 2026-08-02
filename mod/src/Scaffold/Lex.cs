@@ -156,7 +156,7 @@ namespace Sleeptalker.Scaffold
                 { "mode.rigrooms", "Rig" },
                 { "mode.station", "Station" },
                 // F1 key summaries
-                { "help.table", "Arrows walk the table, Left and Right browse facets, Space full row, Enter activates, Backspace goes back, V top bar, M map, G rig." },
+                { "help.table", "Arrows walk the table, Left and Right browse facets, Space full row, Enter activates, Backspace goes back, V top bar, M map, G rig, U character sheet." },
                 { "map.unavailable", "Map not available here." },
                 { "rig.unavailable", "Rig toggle not available here." },
                 { "help.topbar", "Up and Down walk the bar, Enter presses buttons, V or Backspace closes." },

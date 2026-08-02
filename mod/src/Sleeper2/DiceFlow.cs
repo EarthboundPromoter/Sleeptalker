@@ -79,6 +79,11 @@ namespace Sleeptalker.Sleeper2
                         ? Describe.FirstText(button.gameObject) : null;
                     if (label != null) sb.Append(' ').Append(label).Append('.');
                 }
+                // Ride V5 bug: the allocation pipeline PASSES THROUGH Unslot
+                // Dice on every normal slot — flush the not-yet-spoken "Die
+                // returned." so it never precedes the slot announce; genuine
+                // retractions (no slot follows) still speak theirs.
+                SpeechService.FlushSource("dice");
                 SpeechService.Say(sb.ToString(), Priority.Queued, "dice");
             });
 
