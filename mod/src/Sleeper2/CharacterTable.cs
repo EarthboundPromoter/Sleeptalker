@@ -153,6 +153,7 @@ namespace Sleeptalker.Sleeper2
                     _announcePending = false;
                     _watchRow = null;
                     _checkAt = -1f;
+                    _settleUntil = -1f;
                     Table.Reset();
                 }
                 return;
@@ -433,14 +434,17 @@ namespace Sleeptalker.Sleeper2
             if (r.Push) button = NodeButton(r.Node);
             else
             {
-                // Only the NEXT rung's button is interactable (D18 (c)).
+                // Only the NEXT rung's button is LIVE (D18 (c)) — bought rungs
+                // are retired via Button.enabled, not interactable (live bug
+                // 2026-08-03: IsInteractable alone picked a bought rung's dead
+                // button and the row FSM never heard Upgrade).
                 button = null;
                 var stack = r.Node.Find("Skill Upgrade Stack");
                 if (stack != null)
                     foreach (var b in stack.GetComponentsInChildren<Button>(false))
-                        if (b.IsInteractable()) { button = b; break; }
+                        if (b.isActiveAndEnabled && b.IsInteractable()) { button = b; break; }
             }
-            if (button == null || !button.IsInteractable())
+            if (button == null || !button.isActiveAndEnabled || !button.IsInteractable())
             { Table.Say(Lex.T("char.unavailable")); return; }
 
             // Owned push node = the game's FREE instant branch switch (no
@@ -468,8 +472,10 @@ namespace Sleeptalker.Sleeper2
 
             _watchRow = r;
             _pointsBefore = PointsLine();
+            _stateBefore = r.Push ? null : RestingState(r.Node);
             _confirmSpoken = false;
             _checkAt = Time.unscaledTime + 0.5f;
+            _settleUntil = Time.unscaledTime + 1.5f;
             Navigator.Click(button.gameObject);
         }
 
@@ -489,7 +495,9 @@ namespace Sleeptalker.Sleeper2
 
         private static Row _watchRow;
         private static string _pointsBefore;
+        private static string _stateBefore;
         private static float _checkAt = -1f;
+        private static float _settleUntil = -1f;
         private static bool _confirmSpoken;
 
         private static void FeedbackTick()
@@ -506,15 +514,39 @@ namespace Sleeptalker.Sleeper2
                     SpeechService.Say(Lex.T("char.confirm"), Priority.Queued, "char");
                 }
                 _checkAt = Time.unscaledTime + 0.5f;
+                _settleUntil = Time.unscaledTime + 1f;
                 return;
             }
-            _checkAt = -1f;
             var r = _watchRow;
-            _watchRow = null;
-            if (r == null || r.Node == null || !GameQueries.CharacterOpen()) return;
+            if (r == null || r.Node == null || !GameQueries.CharacterOpen())
+            {
+                _checkAt = -1f;
+                _watchRow = null;
+                _settleUntil = -1f;
+                return;
+            }
 
             string after = PointsLine();
             bool spent = !string.IsNullOrEmpty(after) && after != _pointsBefore;
+            // Second success dial: the row FSM has settled on a NEW speakable
+            // level (transit states read null and never count).
+            string state = r.Push ? null : RestingState(r.Node);
+            bool leveled = state != null && state != _stateBefore
+                && ModifierWord(state) != null;
+            // The commit lands FRAMES after the confirm window drops — the row
+            // FSM transits, THEN the tracker repaints both counters. A
+            // nothing-changed read inside that gap is the race, not the verdict
+            // (live capture 2026-08-03: "No change." on a landed upgrade) —
+            // hold judgment until something moves or the settle window expires.
+            if (!spent && !leveled && Time.unscaledTime < _settleUntil)
+            {
+                _checkAt = Time.unscaledTime + 0.15f;
+                return;
+            }
+            _checkAt = -1f;
+            _watchRow = null;
+            _settleUntil = -1f;
+
             var sb = new System.Text.StringBuilder();
             if (spent) sb.Append(after).Append(". ");
             if (r.Push)
@@ -524,7 +556,7 @@ namespace Sleeptalker.Sleeper2
                 string config = ConfigSentence();
                 sb.Append(config ?? PushRead(r));
             }
-            else if (spent) sb.Append(NameCell(r.Node));
+            else if (spent || leveled) sb.Append(NameCell(r.Node));
             else { sb.Append(Lex.T("char.no-change")); }
             Table.Say(sb.ToString());
         }

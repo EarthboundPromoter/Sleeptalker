@@ -139,8 +139,13 @@ namespace Sleeptalker.Scaffold
             Diag.Note("Nav", (pointerPath ? "pointer-click " : "click ") + (go != null ? go.name : "(null)"));
             // A disabled Selectable swallows clicks silently — say so instead
             // (the game gates buttons this way, e.g. End Cycle during the intro).
+            // Component-disabled counts too: ExecuteEvents skips a .enabled=false
+            // Button, and a sibling EventTrigger then reports the pointer path
+            // "activated" without the onClick ever firing (skill-rung capture
+            // 2026-08-03).
             var selectable = go.GetComponent<Selectable>();
-            if (selectable != null && !selectable.IsInteractable())
+            if (selectable != null
+                && (!selectable.isActiveAndEnabled || !selectable.IsInteractable()))
             {
                 SpeechService.Say(ElementDescriber.Element(go, false) + ".", Priority.Immediate, "nav");
                 return;
