@@ -93,7 +93,12 @@ namespace Sleeptalker.Sleeper2
             var history = DialogueState.History;
             if (index < 0 || index >= history.Count) return;
             var line = history[index];
+            // Same named-speaker filter as the live read (log finding
+            // 2026-08-02: the raw "UNKNOWN" placeholder spoke in walk-back;
+            // the live lane has always suppressed it). An unnamed line reads
+            // bare — exactly as it did live.
             string speaker = string.IsNullOrEmpty(line.Speaker)
+                || line.Speaker.Equals("UNKNOWN", System.StringComparison.OrdinalIgnoreCase)
                 ? null : line.Speaker;
             SpeechService.Say(
                 (speaker != null ? speaker + ": " : "") + line.Text,

@@ -94,6 +94,11 @@ namespace Sleeptalker.Sleeper2
                     _lockedSpoken = true;
                     SpeechService.Say(locked, Priority.Queued, "char");
                 }
+                // Current point total on open (owner request 2026-08-02):
+                // the Upgrade Tracker's own rendered text, once per entry.
+                string points = PointsLine();
+                if (points.Length > 0)
+                    SpeechService.Say(points + ".", Priority.Queued, "char");
             }
             return Table.HandleKeys();
         }
@@ -149,16 +154,24 @@ namespace Sleeptalker.Sleeper2
                     if (!child.gameObject.activeInHierarchy) continue;
                     var buttons = child.Find("Buttons");
                     if (buttons == null) continue;
+                    var pushRows = new List<Row>();
                     foreach (Transform node in buttons)
                     {
                         if (!node.gameObject.activeInHierarchy) continue;
-                        _rows.Add(new Row
+                        pushRows.Add(new Row
                         {
                             Node = node,
                             Push = true,
                             Index = Util.TrailingInt(node.name),
                         });
                     }
+                    // Owner ruling 2026-08-01: the table walks the tree
+                    // TOP-DOWN — tier 1 (nodes 1/2), then 2 (3/4), then 3
+                    // (5/6). Transform order is the render's bottom-up tree
+                    // art; the node index is tier-ascending by construction
+                    // (D18 (e)), so index order IS the navigation order.
+                    pushRows.Sort((a, b) => a.Index.CompareTo(b.Index));
+                    _rows.AddRange(pushRows);
                 }
             }
             return _rows;

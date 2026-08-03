@@ -31,15 +31,26 @@ namespace Sleeptalker.Sleeper2
 
         public static bool Entered { get; private set; }
 
-        // Three fixed rows (owner ruling 2026-07-31): vitals | buttons | dice.
-        private const int RowVitals = 0, RowButtons = 1, RowDice = 2;
+        // Three fixed rows (owner ruling 2026-07-31): vitals | buttons | dice —
+        // plus one row PER DEPLOYED CREW MEMBER on contracts (owner ruling
+        // 2026-08-02: crew review = own rows; columns name | skills | dice;
+        // stress rides the vitals row via the crew channel).
+        private const int RowVitals = 0, RowButtons = 1, RowDice = 2, RowCrewFirst = 3;
         private static readonly List<Cell> CellCache = new List<Cell>();
         private static int _cachedRow = -1;
         private static float _builtAt = -1f;
 
+        private static List<int> CrewMembers()
+        {
+            var members = new List<int>();
+            for (int m = 1; m <= 2; m++)
+                if (CrewPanel.PanelOf(m) != null) members.Add(m);
+            return members;
+        }
+
         private static readonly TableEngine Table = new TableEngine
         {
-            Rows = () => 3,
+            Rows = () => 3 + CrewMembers().Count,
             Cols = row => Cells(row).Count,
             RowSpeech = (r, c) => RowLine(r),
             CellSpeech = (r, c) => CellLine(r, c),
@@ -70,13 +81,28 @@ namespace Sleeptalker.Sleeper2
             switch (row)
             {
                 case RowVitals:
-                    foreach (var line in Vitals.Read())
+                    // includeStrip=false (owner ruling 2026-08-02): fuel/supplies/
+                    // cryo render in the BOTTOM strip — the InventoryTable owns
+                    // their review; the V row mirrors only what the top bar draws.
+                    foreach (var line in Vitals.Read(includeStrip: false))
                         CellCache.Add(new Cell { Speech = line });
+                    // Contract-mode Supplied readout (D16; provisional build
+                    // 2026-08-02): the bar renders a supplies count in the
+                    // energy area only in CRT — a render-mirror cell, NO
+                    // ambient channel (double-speak risk vs the Supplies slot
+                    // channel pends the first contract ride).
+                    var supplied = SuppliedCell();
+                    if (supplied != null) CellCache.Add(new Cell { Speech = supplied });
                     break;
                 case RowButtons:
                     AddButton(GameQueries.ShipToggleButton());
                     AddButton(FindButton(
                         "Letterbox Canvas/Top UI/Ship and Map Buttons/Map UI/Button"));
+                    // PUSH (provisional build 2026-08-02 — P6 push reads, first
+                    // rung): the bar's own button, native click; availability
+                    // gates natively (disabled at hubs — use in the field,
+                    // configure at a hub, D18).
+                    AddButton(PushButtonTarget());
                     // Contextual third cell: the Leave/Continue button when the
                     // bar renders one (flagged to owner — strike if unwanted).
                     AddButton(LeaveButton());
@@ -86,6 +112,28 @@ namespace Sleeptalker.Sleeper2
                     {
                         string line = DiceFlow.DieLine(n);
                         if (line != null) CellCache.Add(new Cell { Speech = line });
+                    }
+                    break;
+                default:
+                    // Crew rows (owner ruling 2026-08-02, superseding the
+                    // same-day dice-row cells): name | skills | dice, one row
+                    // per deployed member; rows exist only where the contract
+                    // panels render.
+                    var members = CrewMembers();
+                    int idx = row - RowCrewFirst;
+                    if (idx < 0 || idx >= members.Count) break;
+                    int member = members[idx];
+                    CellCache.Add(new Cell { Speech = CrewPanel.NameStatusCell(member) });
+                    // Stress as a member cell (owner ruling 2026-08-02 second
+                    // pass — disambiguated by its row, out of the vitals row).
+                    string crewStress = CrewPanel.StressCell(member);
+                    if (crewStress != null) CellCache.Add(new Cell { Speech = crewStress });
+                    string skills = CrewPanel.SkillsCell(member);
+                    if (skills != null) CellCache.Add(new Cell { Speech = skills });
+                    for (int s = 1; s <= 2; s++)
+                    {
+                        string die = DiceFlow.CrewDieLine(member, s, withName: false);
+                        if (die != null) CellCache.Add(new Cell { Speech = die });
                     }
                     break;
             }
@@ -98,15 +146,52 @@ namespace Sleeptalker.Sleeper2
             if (line != null) CellCache.Add(new Cell { Speech = line, Target = button });
         }
 
+        /// <summary>The contract-mode Supplied readout's rendered text (label +
+        /// count as drawn). Null anywhere it isn't drawn (hub, rig).</summary>
+        private static string SuppliedCell()
+        {
+            var fsm = GameQueries.FindFsm("Supplied");
+            if (fsm == null || fsm.gameObject == null
+                || !fsm.gameObject.activeInHierarchy
+                || !Util.RenderedUp(fsm.transform)) return null;
+            var sb = new System.Text.StringBuilder();
+            foreach (var tmp in fsm.GetComponentsInChildren<TMPro.TMP_Text>(false))
+            {
+                if (!Util.RenderedUp(tmp.transform)) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                if (sb.Length > 0) sb.Append(' ');
+                sb.Append(text);
+            }
+            return sb.Length > 0 ? sb.Append('.').ToString() : null;
+        }
+
+        /// <summary>The top-bar Push System's own button (D16/D18 — the usage
+        /// affordance; its interactable state is the game's own field-vs-hub
+        /// gate and ButtonLine speaks it).</summary>
+        internal static GameObject PushButtonTarget()
+        {
+            var fsm = GameQueries.FindFsm("Push System");
+            if (fsm == null || fsm.gameObject == null) return null;
+            var button = fsm.GetComponentInChildren<UnityEngine.UI.Button>(false);
+            return button != null ? button.gameObject : null;
+        }
+
         /// <summary>Row arrival: the row's name, then every cell joined — the CS1
         /// full-row read.</summary>
         private static string RowLine(int row)
         {
             var cells = Cells(row);
+            // Crew rows carry no fixed title: the first cell IS the name.
+            string title = row < RowCrewFirst ? Lex.T(RowKeys[Mathf.Clamp(row, 0, 2)]) : null;
             if (cells.Count == 0)
-                return Lex.T(RowKeys[Mathf.Clamp(row, 0, 2)]) + " " + Lex.T("topbar.row-empty");
-            var sb = new System.Text.StringBuilder(Lex.T(RowKeys[Mathf.Clamp(row, 0, 2)]));
-            foreach (var cell in cells) sb.Append(' ').Append(cell.Speech);
+                return (title ?? Lex.T("topbar.title")) + " " + Lex.T("topbar.row-empty");
+            var sb = new System.Text.StringBuilder(title ?? "");
+            foreach (var cell in cells)
+            {
+                if (sb.Length > 0) sb.Append(' ');
+                sb.Append(cell.Speech);
+            }
             return sb.ToString();
         }
 
@@ -132,6 +217,10 @@ namespace Sleeptalker.Sleeper2
                 return;
             }
             Exit(false); // the click's own consequences speak
+            // PUSH commits through the two-press ladder, never the raw click
+            // (owner ruling 2026-08-02 — the click bypasses the game's
+            // confirm stage, D20 §g).
+            if (target == PushButtonTarget()) { PushFlow.Key(); return; }
             Navigator.Click(target);
         }
 

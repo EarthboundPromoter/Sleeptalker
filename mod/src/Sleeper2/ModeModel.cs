@@ -14,6 +14,7 @@ namespace Sleeptalker.Sleeper2
         Map,
         Character,
         DriveLog,
+        Inventory,
         CycleTransition,
         ActionView,
         Travel,
@@ -38,6 +39,9 @@ namespace Sleeptalker.Sleeper2
     ///  - CycleTransition: Cycle Controller off "Idle" — its resting state has
     ///    FOUR exits in CS2 (player / travel / narrative auto-cycle / permadeath,
     ///    D4) so the wrapper arms on any departure.
+    ///  - Inventory: the strip's own root FSM in "Item 5" — the game's gamepad
+    ///    browse mode (D6; the char window and map park the root, so this can
+    ///    never shadow them).
     ///  - ActionView: the game's own Action View? global.
     ///  - Travel: Current Location Scene prefix "TRN" (D9 master scene dial).
     ///  - RigRooms: Ship UI toggle FSM in "Idle Ship" (D9 — RIG view is a
@@ -69,6 +73,9 @@ namespace Sleeptalker.Sleeper2
             if (GameQueries.CharacterOpen()) return Mode.Character;
             if (JournalTable.WindowOpen()) return Mode.DriveLog;
             if (GameQueries.CycleTransitioning()) return Mode.CycleTransition;
+            // Below the cycle wrapper (sync pass 2026-08-02 F7: an auto-cycle
+            // mid-browse must hand the mode to the pipeline, not the table).
+            if (GameQueries.InventoryBrowse()) return Mode.Inventory;
             if (ActionViewUp()) return Mode.ActionView;
             if (GameQueries.TravelScene()) return Mode.Travel;
             if (GameQueries.RigSide()) return Mode.RigRooms;

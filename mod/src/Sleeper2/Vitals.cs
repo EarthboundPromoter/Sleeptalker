@@ -35,8 +35,22 @@ namespace Sleeptalker.Sleeper2
             public Func<PlayMakerFSM, float> Value;    // current value, from the bar's own vars
             public Func<PlayMakerFSM, float> Max;      // capacity; 0 = unknown, spoken without "of"
             public Func<PlayMakerFSM, string> SpokenName; // per-instance name (crew); null = Name
-            public float? LastSpoken;                  // mod-side cache: direction + first-signal mute
-            public PlayMakerFSM LiveFsm;               // last bar seen alive, for on-demand Read()
+            public bool StripRendered;                 // renders in the BOTTOM strip, not the top bar (D6)
+            public bool AnnounceWhenDrawnOnly;         // suppress changes while the bar isn't drawn (crew, D10)
+            public bool AnnounceOnly;                  // change clock only — never a Read()/readout line
+            public bool TopBarRowExcluded;             // out of the V vitals row; wake summary keeps it (crew stress)
+            public Func<string> Suffix;                // extra composed fact (stress: the damaging-rolls forecast)
+            // Per-element caches, keyed by the spoken name (owner ruling
+            // 2026-08-02, the die-health post-mortem: ONE shared cache across
+            // five Dice Health bars spoke a false "Die 5 health down" and
+            // swallowed two real restores — every individual element tracks
+            // individually). Name-keyed, not instance-keyed, so the contract
+            // stress channel's same-titled bar COPIES still dedupe (their
+            // storm rides one key) while distinct elements never collide.
+            public readonly Dictionary<string, float> LastByName
+                = new Dictionary<string, float>();     // direction + first-signal mute, per element
+            public readonly Dictionary<string, PlayMakerFSM> LiveByName
+                = new Dictionary<string, PlayMakerFSM>(); // live bar per element, for on-demand Read()
         }
 
         private static readonly List<Channel> Channels = new List<Channel>();
@@ -53,6 +67,11 @@ namespace Sleeptalker.Sleeper2
                 UpdateStates = new[] { "Animation and Sound" },
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = fsm => FirstNumberIn(fsm.gameObject.name),
+                // Owner build 2026-08-02 (guide-confirmed): the white markers
+                // above the stress bar forecast which ROLLS damage dice —
+                // composed from the same variables the game's own Stress
+                // Check N compares (the blocked-travel precedent).
+                Suffix = DamagingRolls,
             });
 
             // Energy. Clock = the "Energy Setter 0..6" family (exact CS1 parity, D3a) —
@@ -87,7 +106,15 @@ namespace Sleeptalker.Sleeper2
                 UpdateStates = new[] { "Animation and Sound", "Animation and Sound 2" },
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = CrewMax,
-                SpokenName = fsm => CrewName(fsm) + " " + Lex.T("vitals.stress"),
+                SpokenName = fsm => CrewSpokenName(fsm) + " " + Lex.T("vitals.stress"),
+                // Owner ruling 2026-08-02: crew bars poll while UNDRAWN outside
+                // contracts — those changes cache silently (wake summary +
+                // contract panels carry the truth). Escape hatch: this flag.
+                AnnounceWhenDrawnOnly = true,
+                // Owner ruling 2026-08-02 (second pass): crew stress reviews in
+                // the member's OWN V-table row, not the vitals row; change
+                // announcements and the wake summary keep their lines.
+                TopBarRowExcluded = true,
             });
 
             // Fuel / Supplies / Cryo slots. All three Amount FSMs' owners are named
@@ -97,6 +124,49 @@ namespace Sleeptalker.Sleeper2
             RegisterSlot("vitals.fuel", "Fuel Slot");
             RegisterSlot("vitals.supplies", "Supplies Slot");
             RegisterSlot("vitals.cryo", "Cryo Slot");
+
+            // Contract stress (owner report 2026-08-02; tutorial text of
+            // record: "Contracts also have their own CONTRACT STRESS. When
+            // this bar is filled the contract will FAIL."). The bar family is
+            // the exact player/crew stress graph — "Derelict Regular Stress",
+            // one standing copy on the Contract Stress Display plus one per
+            // action group (census level4+), all reading the same per-contract
+            // key; the name-keyed cache dedups the copy storm (all copies
+            // render the same title = one key). Registration gives the
+            // change announcements, the V-row readout, AND the two-lane
+            // handoff into resolution reads. Cap: Regular variant = 6 (the
+            // crew-bar idiom; any other variant logs UNKNOWN for capture).
+            Register(new Channel
+            {
+                Name = Lex.T("vitals.contract-stress"),
+                OwnerPrefix = "Derelict",
+                Match = fsm => fsm.gameObject.name.Contains("Stress"),
+                UpdateStates = new[] { "Animation and Sound" },
+                Value = fsm => FloatVar(fsm, "Stress"),
+                Max = CrewMax,
+                // Owner ruling 2026-08-02: the bar's own rendered TITLE names
+                // the contract and changes per job — speak it (Name stays the
+                // generic for effect-word matching).
+                SpokenName = ContractStressName,
+            });
+
+            // Dice health (owner build 2026-08-02; guide-confirmed: three
+            // health per die, break at zero, repair costs glitch). The
+            // per-slot Dice Health bar is the render — "Set Bar" is its
+            // change clock, Color Change → Red the low warning; backing =
+            // the Die<N>_Health key family the game's own Dice Damage writes.
+            Register(new Channel
+            {
+                OwnerPrefix = "Dice Health",
+                UpdateStates = new[] { "Set Bar" },
+                Value = fsm => FloatVar(fsm, "Health"),
+                Max = fsm => 3f,
+                SpokenName = DieHealthName,
+                // Change clock ONLY (ride bug 2026-08-02: a "Die health 3 of
+                // 3" cell landed in the V vitals row) — standing health rides
+                // the DICE row's own die reads, not the vitals readout.
+                AnnounceOnly = true,
+            });
 
             // Glitch dials. UICircle renders /6; decrease clock "Set Bar" is silent
             // in-game, increase "Set Bar 2" adds sound — both are render changes, both
@@ -142,6 +212,10 @@ namespace Sleeptalker.Sleeper2
                 UpdateStates = new[] { "Updating" },
                 Value = fsm => RenderedNumber(fsm) ?? FloatVar(fsm, "Value"),
                 Max = SiblingLimit,
+                // D6: these slots ARE the bottom inventory strip — the top bar
+                // never renders them (owner ruling 2026-08-02: the V table cuts
+                // them; the InventoryTable is their review surface).
+                StripRendered = true,
             });
         }
 
@@ -169,75 +243,248 @@ namespace Sleeptalker.Sleeper2
                 FsmSignals.Subscribe(null, state, (fsm, s) => OnChanged(ch, fsm));
         }
 
+        /// <summary>The value a bar's element may SPEAK: floored at zero and
+        /// capped at its capacity (owner ruling 2026-08-02, the "-1 of 10" /
+        /// "7 of 6" post-mortem: the game's backing vars overflow in BOTH
+        /// directions during scripted sequences and disable triggers —
+        /// the screen never draws past the bounds, so neither do we). The
+        /// raw value logs loudly whenever the clamp bites.</summary>
+        private static float Bounded(Channel ch, PlayMakerFSM fsm, string key, out float max)
+        {
+            max = ch.Max(fsm);
+            float raw = ch.Value(fsm);
+            float value = raw < 0f ? 0f : (max > 0f && raw > max ? max : raw);
+            if (value != raw)
+                LogOnce("[Vitals] CLAMPED " + key + ": raw " + raw
+                    + " spoken as " + value + " (bounds 0.."
+                    + (max > 0f ? max.ToString("0.#") : "open") + ")");
+            return value;
+        }
+
         private static void OnChanged(Channel ch, PlayMakerFSM fsm)
         {
             if (fsm == null || !fsm.gameObject.name.StartsWith(ch.OwnerPrefix)) return;
             if (ch.Match != null && !ch.Match(fsm)) return;
-            ch.LiveFsm = fsm;
+            string key = NameOf(ch, fsm);
+            ch.LiveByName[key] = fsm;
 
-            float value = ch.Value(fsm);
-            if (ch.LastSpoken == null)
+            float value = Bounded(ch, fsm, key, out float _);
+            if (!ch.LastByName.TryGetValue(key, out float last))
             {
-                ch.LastSpoken = value;   // load-time catch-up: cache, stay silent
+                ch.LastByName[key] = value;   // load-time catch-up: cache, stay silent
                 return;
             }
-            if (value == ch.LastSpoken.Value) return;
-
-            // Two-lane rule (CS1 ResourceWatch carried): while a resolution or a
-            // cycle transition is in flight, the interaction lane speaks (outcome
-            // deltas / the wake summary's absolutes) — this base lane caches
-            // silently instead of double-speaking.
-            if (ActionOutcomes.ResolutionInFlight || CycleGate.TransitionInFlight)
+            if (value == last)
             {
-                // CS1 ResourceWatch shape (owner direction, ride V5): the
-                // observed change is HANDED to the outcome lane, never
-                // discarded — amount + new total compose into the utterance.
-                float before = ch.LastSpoken.Value;
-                if (ActionOutcomes.ResolutionInFlight)
-                    ActionOutcomes.OfferDelta(NameOf(ch, fsm),
-                        value - before, Format(value, ch.Max(fsm)));
-                ch.LastSpoken = value;
-                Plugin.Log.LogInfo("[Vitals] stood down (interaction lane): "
-                    + NameOf(ch, fsm) + " -> " + value);
+                // A clamped-region write renders as NO change — but the push
+                // cost latch still needs the signal (sync pass MED-3: deep-
+                // negative raw stress + cost clamped 0→0 wedged the compose
+                // at its deadline).
+                if (PushFlow.FireInFlight) PushFlow.NoteNullDelta(key);
                 return;
             }
 
-            string direction = Lex.T(value > ch.LastSpoken.Value ? "vitals.up" : "vitals.down");
-            ch.LastSpoken = value;
-            SpeechService.Say(NameOf(ch, fsm) + " " + direction + ", "
-                + Format(value, ch.Max(fsm)) + ".", Priority.Queued, "vitals");
+            if (HandOffIfLaneInFlight(ch, key, fsm, value, last)) return;
+
+            // Ambient announces go through a short settle-verify (owner
+            // ruling 2026-08-02, the glitch 3-then-2 misreport: scripted
+            // sequences mutate vitals in bursts, and an intermediate value
+            // spoken in flight is misinformation). The spoken value re-reads
+            // at speech time; a burst extends the wait and collapses to its
+            // settled value; a round-trip back to the cached value goes
+            // silent. Aged out loudly so a never-quiet bar cannot starve.
+            EnqueueVerify(ch, key, fsm);
         }
 
-        /// <summary>The current bar state for a rendered effect word ("ENERGY",
-        /// "13 CRYO" — the card's own vocabulary): the matching channel's live
-        /// "x of y". Null when no channel matches or its bar is gone. Feeds the
-        /// outcome composition (owner ruling: gain/loss, then the resulting
-        /// state).</summary>
-        public static string CurrentFor(string renderedWord)
+        /// <summary>The lane handoffs (push, then the two-lane rule) — checked
+        /// both at signal time and again at verified-speech time. True = the
+        /// change was consumed (cache updated).</summary>
+        private static bool HandOffIfLaneInFlight(
+            Channel ch, string key, PlayMakerFSM fsm, float value, float last)
+        {
+            // Push lane first (sync pass MED-9: before the undrawn gate so a
+            // RALLY crew heal on a momentarily undrawn bar cannot vanish).
+            if (PushFlow.FireInFlight)
+            {
+                PushFlow.OfferDelta(key, value - last, Format(value, ch.Max(fsm)));
+                ch.LastByName[key] = value;
+                Plugin.Log.LogInfo("[Vitals] stood down (push lane): "
+                    + key + " -> " + value);
+                return true;
+            }
+
+            // Undrawn-bar suppression (owner ruling 2026-08-02, crew channel):
+            // a change on a bar the screen isn't drawing caches silently.
+            if (ch.AnnounceWhenDrawnOnly && !Util.RenderedUp(fsm.transform))
+            {
+                ch.LastByName[key] = value;
+                return true;
+            }
+
+            // Two-lane rule (CS1 ResourceWatch carried): while a resolution or
+            // a cycle transition is in flight, the interaction lane speaks —
+            // the observed change is HANDED over, never discarded. Hand-off
+            // requires an OPEN capture (sync pass HIGH-2: the post-read TAIL
+            // has no consumer — a tail delta speaks ambient instead of being
+            // cleared unspoken at the next capture).
+            bool capturePending = ActionOutcomes.CapturePending;
+            if (capturePending || CycleGate.TransitionInFlight)
+            {
+                if (capturePending)
+                    ActionOutcomes.OfferDelta(key, ch.Name ?? key,
+                        value - last, Format(value, ch.Max(fsm)));
+                ch.LastByName[key] = value;
+                Plugin.Log.LogInfo("[Vitals] stood down (interaction lane): "
+                    + key + " -> " + value);
+                return true;
+            }
+            return false;
+        }
+
+        private sealed class PendingAnnounce
+        {
+            public Channel Ch;
+            public string Key;
+            public PlayMakerFSM Fsm;
+            public int Quiet;   // ticks since the last change signal
+            public int Age;     // total ticks pending
+        }
+
+        private static readonly List<PendingAnnounce> _pending =
+            new List<PendingAnnounce>();
+        private const int VerifyQuietTicks = 15;  // ~0.25s of no further writes
+        private const int VerifyMaxAgeTicks = 90; // never-quiet backstop, logged
+
+        private static void EnqueueVerify(Channel ch, string key, PlayMakerFSM fsm)
+        {
+            foreach (var p in _pending)
+                if (p.Ch == ch && p.Key == key) { p.Quiet = 0; p.Fsm = fsm; return; }
+            _pending.Add(new PendingAnnounce { Ch = ch, Key = key, Fsm = fsm });
+        }
+
+        public static void Tick()
+        {
+            for (int i = _pending.Count - 1; i >= 0; i--)
+            {
+                var p = _pending[i];
+                p.Quiet++;
+                p.Age++;
+                if (p.Quiet < VerifyQuietTicks && p.Age < VerifyMaxAgeTicks) continue;
+                if (p.Age >= VerifyMaxAgeTicks && p.Quiet < VerifyQuietTicks)
+                    Plugin.Log.LogWarning("[Vitals] " + p.Key
+                        + " never went quiet — aged announce (capture)");
+                _pending.RemoveAt(i);
+                SpeakVerified(p);
+            }
+        }
+
+        private static void SpeakVerified(PendingAnnounce p)
+        {
+            var ch = p.Ch;
+            var fsm = p.Fsm;
+            if (fsm == null || fsm.gameObject == null
+                || !fsm.gameObject.activeInHierarchy)
+                return; // bar gone mid-verify: cache untouched, next signal re-diffs
+            float value = Bounded(ch, fsm, p.Key, out float max);
+            if (!ch.LastByName.TryGetValue(p.Key, out float last)
+                || value == last)
+            {
+                ch.LastByName[p.Key] = value;  // round-tripped: silent
+                return;
+            }
+            if (HandOffIfLaneInFlight(ch, p.Key, fsm, value, last)) return;
+            string direction = Lex.T(value > last ? "vitals.up" : "vitals.down");
+            ch.LastByName[p.Key] = value;
+            string announce = p.Key + " " + direction + ", "
+                + Format(value, max) + ".";
+            string extra = ch.Suffix != null ? ch.Suffix() : null;
+            if (extra != null) announce += " " + extra;
+            SpeechService.Say(announce, Priority.Queued, "vitals");
+        }
+
+        /// <summary>The LONGEST channel name contained in a rendered word —
+        /// the channel-identity match (sync pass MED-4: "CONTRACT STRESS"
+        /// contains "Stress" and "PERMANENT GLITCH" contains "Glitch"; the
+        /// longer, more specific channel owns the word). Null off-family.</summary>
+        public static string CanonicalFor(string renderedWord)
         {
             if (string.IsNullOrEmpty(renderedWord)) return null;
             string upper = renderedWord.ToUpperInvariant();
+            string best = null;
             foreach (var ch in Channels)
             {
                 if (ch.Name == null) continue; // per-instance channels (crew) opt out
                 if (!upper.Contains(ch.Name.ToUpperInvariant())) continue;
-                var fsm = ch.LiveFsm;
-                if (fsm == null || !fsm.gameObject.activeInHierarchy) continue;
-                return Format(ch.Value(fsm), ch.Max(fsm));
+                if (best == null || ch.Name.Length > best.Length) best = ch.Name;
+            }
+            return best;
+        }
+
+        /// <summary>The current bar state for a rendered effect word ("ENERGY",
+        /// "13 CRYO" — the card's own vocabulary): the matching channel's live
+        /// "x of y", longest-name-wins. Null when no channel matches or its
+        /// bar is gone. Feeds the outcome composition (owner ruling: gain/
+        /// loss, then the resulting state).</summary>
+        public static string CurrentFor(string renderedWord)
+        {
+            string best = CanonicalFor(renderedWord);
+            if (best == null) return null;
+            foreach (var ch in Channels)
+            {
+                if (ch.Name != best) continue;
+                var fsm = FirstLive(ch);
+                if (fsm == null) continue;
+                float v = Bounded(ch, fsm, ch.Name, out float m);
+                return Format(v, m);
+            }
+            return null;
+        }
+
+        /// <summary>Any live bar of the channel (single-element channels have
+        /// exactly one; same-titled copies are interchangeable).</summary>
+        private static PlayMakerFSM FirstLive(Channel ch)
+        {
+            foreach (var kv in ch.LiveByName)
+            {
+                var fsm = kv.Value;
+                if (fsm != null && fsm.gameObject != null
+                    && fsm.gameObject.activeInHierarchy) return fsm;
             }
             return null;
         }
 
         /// <summary>Current readout of every channel with a live bar — the vitals
-        /// readout and the top-bar table speak exactly this list.</summary>
-        public static List<string> Read()
+        /// readout and the top-bar table speak exactly this list. The top-bar
+        /// table passes includeStrip=false (owner ruling 2026-08-02): fuel/
+        /// supplies/cryo render in the BOTTOM strip, so the V table surfaces
+        /// only what the top bar draws; the wake summary keeps the full set
+        /// (absolute-state composition, not a bar mirror).</summary>
+        public static List<string> Read(bool includeStrip = true)
         {
             var lines = new List<string>();
             foreach (var ch in Channels)
             {
-                var fsm = ch.LiveFsm;
-                if (fsm == null || !fsm.gameObject.activeInHierarchy) continue;
-                lines.Add(NameOf(ch, fsm) + " " + Format(ch.Value(fsm), ch.Max(fsm)) + ".");
+                if (ch.AnnounceOnly) continue;
+                if (!includeStrip && (ch.StripRendered || ch.TopBarRowExcluded)) continue;
+                // Every live element speaks its own line (owner ruling
+                // 2026-08-02: individual tracking — the shared-LiveFsm read
+                // listed only the LAST-fired crew bar in the wake summary).
+                foreach (var kv in ch.LiveByName)
+                {
+                    var fsm = kv.Value;
+                    if (fsm == null || fsm.gameObject == null
+                        || !fsm.gameObject.activeInHierarchy) continue;
+                    // Drawn-only channels (crew) read only what the screen
+                    // draws (owner ruling 2026-08-02: crew data never speaks
+                    // outside a contract — an undrawn bar is garbage at best).
+                    if (ch.AnnounceWhenDrawnOnly && !Util.RenderedUp(fsm.transform))
+                        continue;
+                    float v = Bounded(ch, fsm, kv.Key, out float m);
+                    string line = kv.Key + " " + Format(v, m) + ".";
+                    string suffix = ch.Suffix != null ? ch.Suffix() : null;
+                    if (suffix != null) line += " " + suffix;
+                    lines.Add(line);
+                }
             }
             return lines;
         }
@@ -264,7 +511,84 @@ namespace Sleeptalker.Sleeper2
             return 5f;
         }
 
-        private static float CrewMax(PlayMakerFSM fsm)
+        /// <summary>"Die 3 health" — the slot index from the bar's own home
+        /// ("Dice Slot N/Dice Health").</summary>
+        private static string DieHealthName(PlayMakerFSM fsm)
+        {
+            for (var t = fsm.transform; t != null; t = t.parent)
+                if (t.name.StartsWith("Dice Slot "))
+                    return Lex.T("dice.die") + " " + Util.LeadingInt(t.name.Substring(10)).ToString("0")
+                        + " " + Lex.T("dice.health-lower");
+            return Lex.T("dice.die") + " " + Lex.T("dice.health-lower");
+        }
+
+        /// <summary>The contract stress bar's own rendered title — it names the
+        /// contract and changes per job (owner ruling 2026-08-02: speak the
+        /// true rendered name; "Contract stress" is the logged fallback and
+        /// the effect-word matching handle). Searched two levels above the
+        /// bar (its stress block, then the display group), first rendered
+        /// non-numeric text wins.</summary>
+        private static string ContractStressName(PlayMakerFSM fsm)
+        {
+            var t = fsm.transform.parent;
+            for (int depth = 0; t != null && depth < 2; depth++, t = t.parent)
+            {
+                foreach (var tmp in t.GetComponentsInChildren<TMPro.TMP_Text>(false))
+                {
+                    if (tmp.transform == fsm.transform) continue;
+                    if (!Util.RenderedUp(tmp.transform)) continue;
+                    string text = SpeechService.Clean(tmp.text);
+                    if (string.IsNullOrEmpty(text)) continue;
+                    if (Util.LeadingInt(text) > 0 || text == "/" || text == "-") continue;
+                    return text;
+                }
+            }
+            LogOnce("[Vitals] contract stress bar renders no title — generic spoken");
+            return Lex.T("vitals.contract-stress");
+        }
+
+        /// <summary>The rolls that damage dice RIGHT NOW — computed from the
+        /// SAME variables the game's own Stress Check N compares (die FSM
+        /// Stress Trigger 1..6 vs the stress the bar draws; the white markers
+        /// above the stress bar are the render of this mapping — guide text
+        /// of record 2026-08-02). Null when no face qualifies. Triggers are
+        /// runtime-written (data defaults are 0): all-zero reads as unwritten
+        /// and stays silent, logged once for capture — a trigger of 0 meaning
+        /// "always damages" would hide here; the first ride decides.</summary>
+        public static string DamagingRolls()
+        {
+            PlayMakerFSM bar = null;
+            foreach (var ch in Channels)
+                if (ch.OwnerPrefix == "Stress System ") { bar = FirstLive(ch); break; }
+            if (bar == null) return null;
+            float stress = FloatVar(bar, "Stress");
+
+            var die = GameObject.Find("Letterbox Canvas/Top UI/Dice UI/Dice Slot 1/Die");
+            var dieFsm = die != null ? die.GetComponent<PlayMakerFSM>() : null;
+            if (dieFsm == null) return null;
+            var faces = new List<int>();
+            bool anyWritten = false;
+            for (int n = 1; n <= 6; n++)
+            {
+                var trigger = dieFsm.FsmVariables.GetFsmFloat("Stress Trigger " + n);
+                if (trigger == null || trigger.Value <= 0f) continue;
+                anyWritten = true;
+                if (stress >= trigger.Value) faces.Add(n);
+            }
+            if (!anyWritten)
+            {
+                if (stress > 0f)
+                    LogOnce("[Vitals] stress triggers unwritten at stress " + stress
+                        + " — damage forecast silent (capture)");
+                return null;
+            }
+            if (faces.Count == 0) return null;
+            var parts = new string[faces.Count];
+            for (int i = 0; i < faces.Count; i++) parts[i] = faces[i].ToString();
+            return Lex.T("vitals.damaging") + " " + string.Join(", ", parts) + ".";
+        }
+
+        internal static float CrewMax(PlayMakerFSM fsm)
         {
             string name = fsm.gameObject.name;
             if (name.Contains("Regular")) return 6f;
@@ -274,8 +598,22 @@ namespace Sleeptalker.Sleeper2
             return 0f;
         }
 
-        /// <summary>PROVISIONAL: crew identity from the bar's own Crew Identifier var
-        /// ("Crew1" → "Crew 1"); replaced by the rendered crew name with the crew surfaces.</summary>
+        /// <summary>Crew identity for speech: the RENDERED panel name (owner
+        /// ruling 2026-08-02 — the provisional wording graduated), falling to
+        /// the old identifier-derived "Crew N" when the panel isn't drawn.</summary>
+        private static string CrewSpokenName(PlayMakerFSM fsm)
+        {
+            int member = CrewPanel.MemberOfTransform(fsm.transform);
+            if (member > 0)
+            {
+                string rendered = CrewPanel.NameOf(member);
+                if (rendered != null) return rendered;
+            }
+            return CrewName(fsm);
+        }
+
+        /// <summary>Fallback crew identity from the bar's own Crew Identifier var
+        /// ("Crew1" → "Crew 1").</summary>
         private static string CrewName(PlayMakerFSM fsm)
         {
             var id = fsm.FsmVariables.GetFsmString("Crew Identifier");

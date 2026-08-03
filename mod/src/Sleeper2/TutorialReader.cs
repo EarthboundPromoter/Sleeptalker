@@ -61,22 +61,47 @@ namespace Sleeptalker.Sleeper2
 
         public static void Init()
         {
-            // The universal dial: every tutorial trigger enters "Tutorial" to show
-            // its panel, and names that panel in its own Tutorial Content variable.
+            // The universal dial: every tutorial trigger enters "Tutorial" to
+            // show its target, named in the trigger's own GameObject variable.
             FsmSignals.Subscribe(null, "Tutorial", OnTriggerTutorial);
         }
 
         private static void OnTriggerTutorial(PlayMakerFSM fsm, string state)
         {
             if (fsm == null || !Util.HasAncestor(fsm.gameObject, "Tutorial System")) return;
-            var content = fsm.FsmVariables.GetFsmGameObject("Tutorial Content");
+            // Decode correction 2026-08-02 (the silent Crisis Popup post-
+            // mortem): the universal GameObject variable is "TUTORIAL OBJECT"
+            // — "Tutorial Content" exists on every trigger only as an empty,
+            // never-referenced STRING. The trigger-announce path had never
+            // fired; every read to date came from the focus-in fallback,
+            // which only panel-class targets (with Set Selected button
+            // watchdogs) can reach. The legacy name stays as a probe.
+            var content = fsm.FsmVariables.GetFsmGameObject("TUTORIAL OBJECT");
+            if (content == null || content.Value == null)
+                content = fsm.FsmVariables.GetFsmGameObject("Tutorial Content");
             if (content == null || content.Value == null)
             {
                 Plugin.Log.LogWarning("[Tutorial] trigger " + fsm.gameObject.name
-                    + " entered Tutorial with no Tutorial Content — capture needed.");
+                    + " entered Tutorial with no target object — capture needed.");
                 return;
             }
             Diag.Note("Tutorial", "trigger " + fsm.gameObject.name + " -> " + content.Value.name);
+
+            // Popup-class targets (the Tutorial Popups root, 14 of 30): timed
+            // self-dismissing toasts — no button watchdog, never take focus,
+            // auto-hide in ~10s. They read as ONE durable queued utterance,
+            // never a walkable modal (the auto-hide would race the buffer and
+            // read as a dismissal). Panel-class keeps the modal machinery.
+            if (Util.HasAncestor(content.Value, "Tutorial Popups"))
+            {
+                if (_popupPending != null)
+                    Plugin.Log.LogWarning("[Tutorial] popup " + _popupPending.name
+                        + " overwritten by " + content.Value.name + " before showing (capture)");
+                _popupPending = content.Value.transform;
+                _popupSince = Time.unscaledTime;
+                return;
+            }
+
             _pending = content.Value.transform;
             _pendingSince = Time.unscaledTime;
             // Claim the speech gate at trigger time, not adoption: the panel takes
@@ -85,6 +110,53 @@ namespace Sleeptalker.Sleeper2
             // (ride capture 2026-07-26). Claiming here silences the floor once and
             // diverts everything until the box reads. Released on timeout below.
             SpeechService.BeginModal("tutorial");
+        }
+
+        private static Transform _popupPending;  // popup-class toast awaiting its render
+        private static float _popupSince;
+
+        /// <summary>Scene teardown (sync pass HIGH-1): a destroyed pending or
+        /// adopted panel reads as Unity fake-null, which made every release
+        /// branch in Tick unreachable — the trigger-time modal claim then held
+        /// the speech gate FOREVER and the mod went near-silent. The scene
+        /// hook releases everything unconditionally.</summary>
+        public static void OnSceneChanged()
+        {
+            bool claimed = _pending != null || _panel != null;
+            _pending = null;
+            _popupPending = null;
+            _panel = null;
+            _panelId = 0;
+            _blocks.Clear();
+            _verifyAt = -1f;
+            if (claimed)
+            {
+                Plugin.Log.LogInfo("[Tutorial] scene change released the modal claim");
+                SpeechService.EndModal();
+            }
+        }
+
+        /// <summary>The popup's readable content: every rendered TMP under it
+        /// except the dismiss chrome (mouse button, platform glyph prompt).</summary>
+        private static string PopupText(Transform popup)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var tmp in popup.GetComponentsInChildren<TMPro.TMP_Text>(false))
+            {
+                bool chrome = false;
+                for (var t = tmp.transform; t != null && t != popup; t = t.parent)
+                    if (t.name == "Console Prompt" || t.name == "Mouse Button"
+                        || t.name == "Popup Dismisser") { chrome = true; break; }
+                if (chrome) continue;
+                if (!Util.RenderedUp(tmp.transform, popup)) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                if (sb.Length > 0) sb.Append(' ');
+                sb.Append(text);
+                char last = text[text.Length - 1];
+                if (last != '.' && last != '!' && last != '?') sb.Append('.');
+            }
+            return sb.Length > 0 ? sb.ToString() : null;
         }
 
         /// <summary>Focus inside the Tutorial System = the modal owns the surface.</summary>
@@ -108,6 +180,33 @@ namespace Sleeptalker.Sleeper2
 
         public static void Tick()
         {
+            // Popup-class toast: speak the moment it draws (render moment) —
+            // one queued utterance, no modal claim, the game's own auto-
+            // dismiss runs untouched.
+            if (_popupPending != null)
+            {
+                if (IsShowing(_popupPending))
+                {
+                    string text = PopupText(_popupPending);
+                    // Own durable source (sync pass MED-5): a panel trigger's
+                    // BeginModal("tutorial") clears same-source queued lines —
+                    // a chained popup+panel would silently destroy the popup
+                    // read. A distinct source gets penned and spoken after.
+                    if (text != null)
+                        SpeechService.Say(text, Priority.Queued, "tutorial-popup");
+                    else
+                        Plugin.Log.LogWarning("[Tutorial] popup " + _popupPending.name
+                            + " showed with no readable text — capture needed.");
+                    _popupPending = null;
+                }
+                else if (Time.unscaledTime - _popupSince > 5f)
+                {
+                    Plugin.Log.LogWarning("[Tutorial] popup " + _popupPending.name
+                        + " never became visible — capture needed.");
+                    _popupPending = null;
+                }
+            }
+
             // Trigger-announced panel: adopt once it actually shows (the panel's own
             // FSM switches platform variants for a beat after the trigger fires).
             if (_pending != null)
@@ -353,6 +452,11 @@ namespace Sleeptalker.Sleeper2
         /// captured. Unlisted prompts fall through to their own rendered text.</summary>
         private static readonly (string fragment, string lexKey)[] PromptKeys =
         {
+            // Push before the stick entries (contains-match, first wins): the
+            // mod's P key is the push binding (owner ruling 2026-08-02). If
+            // the push prompts turn out stick-named, the mismatch log now
+            // captures their names for a precise mapping.
+            ("Push", "prompt.push"),
             ("A Prompt", "prompt.enter"),
             ("B Prompt", "prompt.backspace"),
             ("DPAD", "prompt.arrows"),
@@ -383,6 +487,7 @@ namespace Sleeptalker.Sleeper2
         private static string FillPromptGaps(TMP_Text tmp, string txt)
         {
             var prompts = new List<(Vector3 pos, string word)>();
+            var promptNames = new List<string>();
             foreach (Transform child in tmp.transform)
             {
                 if (!child.gameObject.activeSelf) continue;
@@ -391,6 +496,7 @@ namespace Sleeptalker.Sleeper2
                 if (n.IndexOf("Target", System.StringComparison.Ordinal) >= 0) continue;
                 if (n.IndexOf("postioner", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
                 prompts.Add((child.position, PromptWord(child)));
+                promptNames.Add(n);
             }
             if (prompts.Count == 0) return txt;
             prompts.Sort((a, b) => a.pos.y != b.pos.y
@@ -405,12 +511,28 @@ namespace Sleeptalker.Sleeper2
                     sb.Append(' ').Append(prompts[i].word).Append(' ').Append(segments[i + 1].TrimStart());
                 return sb.ToString();
             }
+
+            // Mismatch. Platform-variant prompt STACKS duplicate one word over
+            // one gap (ride capture 2026-08-02: the push tutorial stacked four
+            // variants over a single gap and the append spoke all four) —
+            // dedupe first, and if the unique words then match the gaps, fill
+            // normally. Prompt object names are logged for the key map.
+            var unique = new List<string>();
+            foreach (var p in prompts)
+                if (!unique.Contains(p.word)) unique.Add(p.word);
             Plugin.Log.LogInfo("[Tutorial] prompt gap mismatch under " + tmp.name + ": "
-                + prompts.Count + " prompt(s), " + (segments.Length - 1) + " gap(s) — appending.");
-            var words = new List<string>();
-            foreach (var p in prompts) words.Add(p.word);
+                + prompts.Count + " prompt(s) [" + string.Join(" | ", promptNames)
+                + "], " + (segments.Length - 1) + " gap(s), "
+                + unique.Count + " unique word(s).");
+            if (segments.Length == unique.Count + 1)
+            {
+                var sb = new System.Text.StringBuilder(segments[0]);
+                for (int i = 0; i < unique.Count; i++)
+                    sb.Append(' ').Append(unique[i]).Append(' ').Append(segments[i + 1].TrimStart());
+                return sb.ToString();
+            }
             return txt + ". " + Lex.T("tutorial.shown-with") + " "
-                + string.Join(Lex.T("tutorial.and"), words) + ".";
+                + string.Join(Lex.T("tutorial.and"), unique) + ".";
         }
 
         private static string PromptWord(Transform prompt)

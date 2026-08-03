@@ -139,6 +139,7 @@ namespace Sleeptalker.Sleeper2
         public static Transform ActiveMapPlane()
         {
             Transform belt = null, sector = null;
+            bool ambiguous = false;
             foreach (var container in FindContainers())
             {
                 if (container == null || !container.gameObject.activeInHierarchy) continue;
@@ -149,10 +150,22 @@ namespace Sleeptalker.Sleeper2
                 var group = container.GetComponent<CanvasGroup>();
                 if (group != null && !group.interactable) continue;
                 if (sector == null) sector = container;
-                else LogOnce("[Atlas] two raised sector planes at once: "
-                    + sector.name + " and " + container.name + " — capture");
+                else
+                {
+                    // Two raised sector planes = a transition beat where alpha/
+                    // interactable are untrustworthy (capture 2026-08-02: 8 of
+                    // 10 planes read raised when the map opened over a popup;
+                    // first-wins picked Holms Rock by discovery order and the
+                    // close announce spoke the wrong sector). Ambiguity IS the
+                    // mid-transition state — null per contract; the consumer
+                    // keeps its last good plane.
+                    LogOnce("[Atlas] two raised sector planes at once: "
+                        + sector.name + " and " + container.name + " — ambiguous, null");
+                    ambiguous = true;
+                }
             }
-            return belt != null ? belt : sector;
+            if (belt != null) return belt;
+            return ambiguous ? null : sector;
         }
 
         /// <summary>Map-plane nodes (the map table's provider): same billboard

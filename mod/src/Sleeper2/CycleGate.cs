@@ -25,11 +25,15 @@ namespace Sleeptalker.Sleeper2
     {
         private static bool _armed;
         private static float _settledAt = -10f;
+        private static PlayMakerFSM _pendingController;
+        private static int _pendingTicks;
 
         /// <summary>Vitals stand down while the transition runs (+1s grace for
-        /// the post-unfade bar animations).</summary>
+        /// the post-unfade bar animations); the pending settle-wait counts as
+        /// in-flight so late dice/bar writes keep caching silently.</summary>
         public static bool TransitionInFlight
-            => _armed || Time.unscaledTime < _settledAt + 1f;
+            => _armed || _pendingController != null
+               || Time.unscaledTime < _settledAt + 1f;
 
         public static void Init()
         {
@@ -44,9 +48,28 @@ namespace Sleeptalker.Sleeper2
                 }
                 if (state != "Idle") return;
                 _armed = false;
-                _settledAt = Time.unscaledTime;
-                Summarize(fsm);
+                // The dice reroll AFTER the controller rests (each die runs a
+                // 0.1s randomizer; crew rolls land late in the pipeline — ride
+                // bug 2026-08-02: crew dice spoke as 0 mid-reroll). The
+                // summary waits for the dice to settle: the settle-watch
+                // idiom, frame-counted, loud backstop.
+                _pendingController = fsm;
+                _pendingTicks = 0;
             });
+        }
+
+        public static void Tick()
+        {
+            if (_pendingController == null) return;
+            _pendingTicks++;
+            if (!DiceFlow.AllDiceSettled() && _pendingTicks < 180) return;
+            if (_pendingTicks >= 180)
+                Plugin.Log.LogWarning(
+                    "[Cycle] dice never settled — summary at the 3s backstop (capture)");
+            var controller = _pendingController;
+            _pendingController = null;
+            _settledAt = Time.unscaledTime;
+            Summarize(controller);
         }
 
         private static void Summarize(PlayMakerFSM controller)

@@ -50,7 +50,14 @@ namespace Sleeptalker.Middleware
             },
             OnColArrive = (row, col, delta) => { if (delta > 0) EnsureExpanded(Rows()[row]); },
             Detail = (row, _) => FullRow(row),
-            Commit = (row, col) => Activate(Rows()[row], col),
+            // Enter on Name/Objectives = the full-row re-read (owner ruling
+            // 2026-08-02: expansion is automatic on arrival — no toggle click,
+            // no "Expanded." chatter); Track/Abandon keep their actions.
+            Commit = (row, col) =>
+            {
+                if (col <= 1) { FullRow(row); return; }
+                Activate(Rows()[row], col);
+            },
             EmptyRow = () => Lex.T("journal.empty"),
             EmptyCol = () => Lex.T("journal.empty"),
             EmptyDetail = () => Lex.T("journal.empty"),
@@ -100,10 +107,23 @@ namespace Sleeptalker.Middleware
         public static bool HandleKeys()
         {
             // Slash = the native tab swap (structural button names, D5).
+            // The destination tab announces itself by its OWN rendered label
+            // (owner ruling 2026-08-02 — the swap was silent).
             if (Input.GetKeyDown(KeyCode.Slash))
             {
                 var tab = FindByName(ShowingActive ? "Completed Button" : "Active Button");
-                if (tab != null) { Navigator.Click(tab.gameObject); T.Reset(); return true; }
+                if (tab != null)
+                {
+                    var label = tab.GetComponentInChildren<TMPro.TMP_Text>(false);
+                    string name = label != null ? SpeechService.Clean(label.text) : null;
+                    Navigator.Click(tab.gameObject);
+                    T.Reset();
+                    if (!string.IsNullOrEmpty(name))
+                        SpeechService.Say(name + ".", Priority.Queued, "journal");
+                    else
+                        Plugin.Log.LogWarning("[Journal] tab has no rendered label — swap silent");
+                    return true;
+                }
                 Plugin.Log.LogWarning("[Journal] tab button not found");
                 return true;
             }
@@ -228,18 +248,11 @@ namespace Sleeptalker.Middleware
 
         private static void Activate(string quest, int col)
         {
+            // Cols 0/1 never reach here (Commit re-reads the row instead —
+            // owner ruling 2026-08-02: arrival owns expansion; the heading
+            // click and its "Expanded." notification are gone).
             switch (col)
             {
-                case 0:
-                case 1:
-                    var heading = FindHeadingButton(quest);
-                    if (heading != null)
-                    {
-                        Navigator.Click(heading.gameObject);
-                        SpeechService.Say(Lex.T("journal.expanded"), Priority.Immediate, "journal");
-                    }
-                    else Plugin.Log.LogInfo("[Journal] heading for '" + quest + "' not found — silent.");
-                    return;
                 case 2: ToggleTracking(quest); return;
                 default: Abandon(quest); return;
             }

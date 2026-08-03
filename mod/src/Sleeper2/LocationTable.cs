@@ -82,6 +82,10 @@ namespace Sleeptalker.Sleeper2
         public static bool HandleKeys() => Table.HandleKeys();
 
         private static Transform _landedGroup;
+        // >0 = the entry landing awaits the game's card build-out (owner report
+        // 2026-08-01: every location entry spoke "Nothing here." then corrected
+        // itself — the Action View? dial flips before the cards materialize, D2).
+        private static float _landDeadline = -1f;
 
         public static void Tick()
         {
@@ -93,15 +97,41 @@ namespace Sleeptalker.Sleeper2
                 _entered = true;
                 _landedGroup = OpenGroup();
                 Table.Reset();
-                Land();
+                // Deferred landing: the row scan's first content IS the settle
+                // event (render arrival, checked per frame) — the deadline only
+                // exists so a genuinely empty location still speaks its honest
+                // "Nothing here.", logged.
+                _landDeadline = Time.unscaledTime + 2f;
                 return;
             }
             if (!_entered) return;
 
-            // Content swap under a still-true Action View? global (sync review
-            // MED-9: story variants swap whole groups): fresh surface, fresh land.
             if (ModeModel.ActionViewUp())
             {
+                // The pending entry landing: fire the moment cards render.
+                if (_landDeadline > 0f)
+                {
+                    if (!Active()) return; // excursion before landing: hold it
+                    _builtAt = -1f;        // rescan the build-out every frame
+                    if (Actions().Count + Clocks().Count > 0)
+                    {
+                        _landDeadline = -1f;
+                        _landedGroup = OpenGroup();
+                        Land();
+                    }
+                    else if (Time.unscaledTime >= _landDeadline)
+                    {
+                        _landDeadline = -1f;
+                        _landedGroup = OpenGroup();
+                        Plugin.Log.LogInfo("[Location] no cards rendered by the "
+                            + "settle deadline — honest empty landing");
+                        Land();
+                    }
+                    return;
+                }
+
+                // Content swap under a still-true Action View? global (sync review
+                // MED-9: story variants swap whole groups): fresh surface, fresh land.
                 var group = OpenGroup();
                 if (group != _landedGroup)
                 {
@@ -119,6 +149,7 @@ namespace Sleeptalker.Sleeper2
             _group = null;
             _landedGroup = null;
             _builtAt = -1f;
+            _landDeadline = -1f;
             Table.Reset();
         }
 
@@ -219,6 +250,15 @@ namespace Sleeptalker.Sleeper2
             bool isClock = row >= actions.Count;
             var keys = isClock ? ClockHeaderKeys : ActionHeaderKeys;
             if (col < 0 || col >= keys.Length) col = 0;
+            // Status badge in the Costs facet speaks bare (sync pass LOW-8:
+            // the row read lost its "Costs ACTION COMPLETE" but the facet
+            // browse kept it).
+            if (!isClock && col == 1)
+            {
+                string costs = RequiresCell(actions[row], out bool isStatus);
+                if (isStatus) return costs;
+                return Lex.T(keys[col]) + ": " + (costs ?? Lex.T("loc.none"));
+            }
             string content = isClock
                 ? ClockCell(Clocks()[row - actions.Count], col)
                 : ActionCell(actions[row], col);
@@ -286,10 +326,18 @@ namespace Sleeptalker.Sleeper2
         private static string ActionRow(Transform card)
         {
             var sb = new System.Text.StringBuilder(ActionName(card)).Append('.');
-            string costs = RequiresCell(card);
+            string costs = RequiresCell(card, out bool costIsStatus);
             if (costs != null)
-                sb.Append(' ').Append(Lex.T("loc.col.costs")).Append(' ')
-                  .Append(costs).Append('.');
+            {
+                // A status sentence in the cost badge ("ACTION COMPLETE" on a
+                // done card) speaks as-is — never under the Costs header (log
+                // finding 2026-08-02: "Costs ACTION COMPLETE, ENDURE").
+                if (costIsStatus)
+                    sb.Append(' ').Append(costs).Append('.');
+                else
+                    sb.Append(' ').Append(Lex.T("loc.col.costs")).Append(' ')
+                      .Append(costs).Append('.');
+            }
             string risk = RiskCell(card);
             if (risk != null) sb.Append(' ').Append(risk).Append('.');
             string lockText = SkillLockText(card);
@@ -309,7 +357,9 @@ namespace Sleeptalker.Sleeper2
         {
             switch (col)
             {
-                case 0: return ActionRow(card);
+                // Name facet = the name alone (log finding 2026-08-02: the
+                // "Name:" cell spoke the entire card).
+                case 0: return ActionName(card);
                 case 1: return RequiresCell(card);
                 case 2: return RiskCell(card);
                 case 3: return CostCell(card);
@@ -327,7 +377,11 @@ namespace Sleeptalker.Sleeper2
         /// fails, loudly (owner law: render is the source of truth, backing
         /// second). Then the rendered skill + modifier tier.</summary>
         private static string RequiresCell(Transform card)
+            => RequiresCell(card, out _);
+
+        private static string RequiresCell(Transform card, out bool isStatus)
         {
+            isStatus = false;
             var parts = new List<string>();
             // THE requirement render (canteen ride capture 2026-07-31): the card
             // states its own requirement as a sentence — the Input Border's
@@ -370,6 +424,17 @@ namespace Sleeptalker.Sleeper2
             }
             if (take != null) parts.Add(take);
 
+            // Status sentences ("ACTION COMPLETE") stand alone — the skill
+            // chip beside a done card is stale chrome, not a cost part. Every
+            // trip logs once: a digitless REAL cost misclassified here would
+            // otherwise vanish silently (sync pass LOW-9).
+            if (take != null && CostIsStatus(take))
+            {
+                LogOnce("[Location] cost badge read as STATUS: \"" + take + "\"");
+                isStatus = true;
+                return take;
+            }
+
             string skill = Describe.TextUnder(card, "Skill");
             if (skill != null)
             {
@@ -380,6 +445,18 @@ namespace Sleeptalker.Sleeper2
                 parts.Add(tier != null ? skill + " " + tier : skill);
             }
             return parts.Count > 0 ? string.Join(", ", parts.ToArray()) : null;
+        }
+
+        /// <summary>A cost text that is really a STATUS sentence: no digit and
+        /// not the die word — the badge repurposed as state ("ACTION
+        /// COMPLETE"). Real costs render digits ("13 CRYO") or DICE.</summary>
+        private static bool CostIsStatus(string take)
+        {
+            if (string.IsNullOrEmpty(take)) return false;
+            if (take == Lex.T("loc.takes-die")) return false;
+            foreach (char c in take)
+                if (char.IsDigit(c)) return false;
+            return true;
         }
 
         private static string RiskCell(Transform card)

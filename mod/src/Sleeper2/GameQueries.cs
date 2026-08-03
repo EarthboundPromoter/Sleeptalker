@@ -135,20 +135,32 @@ namespace Sleeptalker.Sleeper2
         /// rides under Leave Contract). While one renders the map table stands
         /// down and the native focus reads carry it. Blockers first — they sit
         /// on top of everything.</summary>
+        // TOPMOST-first: blockers over everything, then the travel chain in
+        // REVERSE stage order — later stages overlay earlier ones and the
+        // earlier windows can stay rendered underneath (ride capture
+        // 2026-08-02: Crew Confrim opened over a still-active Crew Window and
+        // the swap announce never fired while Crew Window preceded it here).
         private static readonly string[] MapSubWindowsAll =
         {
             "No Pilot Window", "Ship Damaged Window",
-            "Travel Confirm Window", "Leave Contract Window",
-            "Crew Window", "Crew Confrim",
+            "Crew Confrim", "Crew Window",
+            "Leave Contract Window", "Travel Confirm Window",
         };
 
-        public static bool MapSubWindowUp()
+        public static bool MapSubWindowUp() => MapSubWindow() != null;
+
+        /// <summary>The topmost rendered map sub-window (the MapSubWindowsAll
+        /// order — blockers first). Null = none up.</summary>
+        public static Transform MapSubWindow()
         {
             var root = MapRoot();
-            if (root == null) return false;
+            if (root == null) return null;
             foreach (var name in MapSubWindowsAll)
-                if (ChildRendered(root, name) != null) return true;
-            return false;
+            {
+                var t = ChildRendered(root, name);
+                if (t != null) return t;
+            }
+            return null;
         }
 
         /// <summary>Map close: window-first Back ownership (sync review MED-10:
@@ -362,6 +374,102 @@ namespace Sleeptalker.Sleeper2
             _mainMenuChecked = _pauseChecked = _mapChecked = _shipChecked = _cycleChecked = false;
             _focusFsm = null;
             _focusChecked = false;
+            _inventoryFsm = null;
+            _inventoryChecked = false;
+        }
+
+        // ---------- Inventory strip (D6, 2026-08-02) ----------
+
+        private static PlayMakerFSM _inventoryFsm;
+        private static bool _inventoryChecked;
+
+        /// <summary>The strip's modality root (D6 (f)): the FSM on Bottom UI/
+        /// Inventory whose resting states are Item 2 (mouse) / Item 3 (pad idle) /
+        /// Item 5 (gamepad browse). Signature-verified — "Inventory" is not a
+        /// unique GO name; the Item 3/Item 5 state pair is the mechanism class.</summary>
+        public static PlayMakerFSM InventoryRootFsm()
+        {
+            if (!_inventoryChecked)
+            {
+                foreach (var fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
+                {
+                    if (fsm == null || fsm.gameObject == null) continue;
+                    if (!fsm.gameObject.scene.IsValid()) continue;
+                    if (fsm.gameObject.name != "Inventory") continue;
+                    if (!HasState(fsm, "Item 5") || !HasState(fsm, "Item 3")) continue;
+                    _inventoryFsm = fsm;
+                    break;
+                }
+                _inventoryChecked = true;
+            }
+            return _inventoryFsm != null && _inventoryFsm.gameObject != null
+                ? _inventoryFsm : null;
+        }
+
+        private static bool HasState(PlayMakerFSM fsm, string name)
+        {
+            var states = fsm.FsmStates;
+            if (states == null) return false;
+            foreach (var s in states)
+                if (s.Name == name) return true;
+            return false;
+        }
+
+        /// <summary>Browse mode: the root FSM in Item 5 — the game's OWN gamepad
+        /// inventory-browse dial (D6 (f)). The char window and map park the root
+        /// via Deactivate, so this is false wherever the strip isn't usable.</summary>
+        public static bool InventoryBrowse()
+        {
+            var fsm = InventoryRootFsm();
+            return fsm != null && fsm.gameObject.activeInHierarchy
+                && fsm.ActiveStateName == "Item 5";
+        }
+
+        /// <summary>Enter/exit the game's own browse mode with the SAME events
+        /// the native Rewired Inventory Toggle sends (events are inputs — the
+        /// MapBack precedent). Only Item 3 carries the Activate transition; a
+        /// press while the root idles in mouse mode (Item 2) would silently
+        /// drop (sync pass 2026-08-02 F4), so that case arms a short pending
+        /// send drained by InventoryPendingTick once the root's own per-frame
+        /// gamepad hop lands in Item 3 — a retry window, not a speech delay.</summary>
+        public static void InventoryToggle()
+        {
+            var fsm = InventoryRootFsm();
+            if (fsm == null || !fsm.gameObject.activeInHierarchy)
+            {
+                Plugin.Log.LogInfo("[Game] InventoryToggle: no live strip root — ignored");
+                return;
+            }
+            string state = fsm.ActiveStateName;
+            if (state == "Item 5") { fsm.SendEvent("Deactivate"); return; }
+            if (state == "Item 3") { fsm.SendEvent("Activate"); return; }
+            EnsureGamepadMode();
+            _inventoryActivateUntil = Time.unscaledTime + 0.5f;
+        }
+
+        private static float _inventoryActivateUntil = -1f;
+
+        /// <summary>Drains a pending browse-mode entry (the Item 2 case) the
+        /// frame the root reaches Item 3; expires loudly.</summary>
+        public static void InventoryPendingTick()
+        {
+            if (_inventoryActivateUntil < 0f) return;
+            var fsm = InventoryRootFsm();
+            if (fsm == null || !fsm.gameObject.activeInHierarchy)
+            { _inventoryActivateUntil = -1f; return; }
+            if (fsm.ActiveStateName == "Item 3")
+            {
+                _inventoryActivateUntil = -1f;
+                fsm.SendEvent("Activate");
+                return;
+            }
+            if (Time.unscaledTime > _inventoryActivateUntil)
+            {
+                _inventoryActivateUntil = -1f;
+                Plugin.Log.LogWarning(
+                    "[Game] InventoryToggle: pending Activate expired — root never left "
+                    + fsm.ActiveStateName + " (capture)");
+            }
         }
 
         // ---------- Camera wire (D17 2026-08-01 — the decoded transfer function;

@@ -250,6 +250,11 @@ namespace Sleeptalker.Scaffold
             text = text.Replace('\n', ' ').Replace('\r', ' ').Replace('\t', ' ');
             text = StutterPattern.Replace(text, "$1");
             text = SpacePattern.Replace(text, " ").Trim();
+            // Leading slash-run decoration ("// LOCAL", "/ STRESS") is visual
+            // styling, not content — the S3 transcode rule, applied CENTRALLY
+            // (ride finding 2026-08-02: the crew window spoke its slashes).
+            // Mid-text slashes ("3 / 5") are untouched.
+            if (text.StartsWith("/")) text = text.TrimStart('/', ' ');
             return text.Length == 0 ? null : text;
         }
     }

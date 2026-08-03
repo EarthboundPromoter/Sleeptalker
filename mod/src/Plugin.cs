@@ -83,7 +83,9 @@ namespace Sleeptalker
                 GameQueries.InvalidateScene();
                 ZoneTable.OnSceneChanged();
                 MapTable.OnSceneChanged();
+                InventoryTable.OnSceneChanged();
                 JournalTable.InvalidateScene();
+                TutorialReader.OnSceneChanged();
             };
 
             _input = new InputManager();
@@ -94,10 +96,13 @@ namespace Sleeptalker
             TutorialReader.Init();
             ZoneTable.Init();
             MapTable.Init();
+            InventoryTable.Init();
             CharacterTable.Init();
             DiceFlow.Init();
+            CrewPanel.Init();
             TopBarTable.Init();
             ActionOutcomes.Init();
+            PushFlow.Init();
             CycleGate.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
@@ -113,11 +118,16 @@ namespace Sleeptalker
             TutorialReader.Tick();
             ZoneTable.Tick();
             MapTable.Tick();
+            InventoryTable.Tick();
+            DiceFlow.Tick();
             CharacterTable.Tick();
             GuideReader.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();
             ActionOutcomes.Tick();
+            PushFlow.Tick();
+            Vitals.Tick();
+            CycleGate.Tick();
             JournalTable.Tick();
             DialogueColumn.Tick();
             Navigator.Tick();

@@ -24,6 +24,8 @@ namespace Sleeptalker.Sleeper2
             // A mouse click claims mouse mode for a sighted co-pilot.
             if (Input.GetMouseButtonDown(0)) GameQueries.EnsureMouseMode();
 
+            PauseAutosaveWatch();
+
             if (!Input.anyKeyDown) return;
             if (!IsModKeyDown()) return;
 
@@ -139,12 +141,26 @@ namespace Sleeptalker.Sleeper2
             // directions); while open, the journal table owns the keys.
             if (Input.GetKeyDown(KeyCode.J))
             {
-                var mode = ModeModel.Current();
+                // J joins the inventory swap set (owner ruling 2026-08-02,
+                // ride finding: the drives screen was unreachable from browse).
+                var mode = SwapOutOfInventory(ModeModel.Current());
                 if (mode == Mode.DriveLog || mode == Mode.Station
                     || mode == Mode.RigRooms || mode == Mode.ActionView)
                 { JournalTable.Toggle(); return; }
             }
             if (ModeModel.Current() == Mode.DriveLog && JournalTable.HandleKeys()) return;
+
+            // Inventory strip: I toggles the game's OWN browse mode (the native
+            // Rewired Inventory Toggle's events, D6); while browsing, the
+            // inventory table owns the keys behind the fence.
+            if (Input.GetKeyDown(KeyCode.I))
+            {
+                var invMode = ModeModel.Current();
+                if (invMode == Mode.Inventory || invMode == Mode.Station
+                    || invMode == Mode.RigRooms || invMode == Mode.ActionView)
+                { GameQueries.InventoryToggle(); return; }
+            }
+            if (InventoryTable.Active() && InventoryTable.HandleKeys()) return;
 
             // Map mode: the map table owns arrows/Enter over the marker planes
             // (spec: before native fallthrough). Native forced-focus sub-windows
@@ -190,13 +206,31 @@ namespace Sleeptalker.Sleeper2
                 }
             }
 
-            if (Input.GetKeyDown(KeyCode.UpArrow)) { Navigator.Move(MoveDirection.Up); return; }
-            if (Input.GetKeyDown(KeyCode.DownArrow)) { Navigator.Move(MoveDirection.Down); return; }
+            // Dice cross-row nav (owner ruling 2026-08-02): native uGUI links
+            // only column-aligned dice — Down from player dice 3-5 went
+            // nowhere. The remap drops any player die onto the crew rows
+            // (1→1, 2-5→2), keeps crew⇄crew aligned, and returns aligned.
+            if (Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                if (ModeModel.Current() == Mode.DiceAllocation
+                    && DiceFlow.CrossRowNav(-1)) return;
+                Navigator.Move(MoveDirection.Up); return;
+            }
+            if (Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                if (ModeModel.Current() == Mode.DiceAllocation
+                    && DiceFlow.CrossRowNav(1)) return;
+                Navigator.Move(MoveDirection.Down); return;
+            }
             if (Input.GetKeyDown(KeyCode.LeftArrow)) { Navigator.Move(MoveDirection.Left); return; }
             if (Input.GetKeyDown(KeyCode.RightArrow)) { Navigator.Move(MoveDirection.Right); return; }
 
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
+                // A keyboard-armed push confirm owns Enter (sync pass HIGH-1:
+                // the V-row commit exits the table before arming, so the
+                // second press needs this rung; P remains the twin).
+                if (PushFlow.ModArmed()) { PushFlow.Key(); return; }
                 Navigator.ActivateCurrent();
                 return;
             }
@@ -207,6 +241,7 @@ namespace Sleeptalker.Sleeper2
             if (Input.GetKeyDown(KeyCode.M)) { MapKey(); return; }
             if (Input.GetKeyDown(KeyCode.G)) { RigKey(); return; }
             if (Input.GetKeyDown(KeyCode.U)) { CharacterKey(); return; }
+            if (Input.GetKeyDown(KeyCode.P)) { PushKey(); return; }
 
             if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
@@ -220,6 +255,10 @@ namespace Sleeptalker.Sleeper2
         /// to the next mode's designed out.</summary>
         private static void ResolveCancel()
         {
+            // An armed push confirm is the topmost transient on any floor —
+            // Backspace cancels it through the game's own Mouseoff (the
+            // disarm watch speaks the close).
+            if (PushFlow.CancelArm()) return;
             switch (ModeModel.Current())
             {
                 case Mode.Pause:
@@ -240,6 +279,11 @@ namespace Sleeptalker.Sleeper2
 
                 case Mode.DriveLog:
                     JournalTable.Toggle(); // the button FSM's Open, both directions
+                    return;
+
+                case Mode.Inventory:
+                    // The same Deactivate the native toggle and watchdog send.
+                    GameQueries.InventoryToggle();
                     return;
 
                 case Mode.DiceAllocation:
@@ -283,7 +327,8 @@ namespace Sleeptalker.Sleeper2
             // every key any surface consumes.
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
-            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.U, KeyCode.Slash,
+            KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.U, KeyCode.I, KeyCode.P,
+            KeyCode.Slash,
             KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
@@ -296,9 +341,57 @@ namespace Sleeptalker.Sleeper2
             return false;
         }
 
+        private static bool _wasPaused;
+        private static bool _autosaveLineMissLogged;
+
+        /// <summary>Esc renders the pause menu's "Time Since Last Autosave"
+        /// status line (D7 (a): label TMP + live value in its child — the
+        /// game's "SInce" typo is wart-registered) — spoken automatically on
+        /// pause entry (owner ruling 2026-08-02). Pre-intro it renders the
+        /// complete-the-intro notice instead; both speak as drawn.</summary>
+        private static void PauseAutosaveWatch()
+        {
+            bool paused = GameQueries.Paused();
+            if (paused == _wasPaused) return;
+            _wasPaused = paused;
+            if (!paused) return;
+            var go = GameObject.Find("PAUSE/Pause Canvas/Time Since Last Autosave");
+            if (go == null || !go.activeInHierarchy)
+            {
+                if (!_autosaveLineMissLogged)
+                {
+                    _autosaveLineMissLogged = true;
+                    Plugin.Log.LogWarning("[Pause] autosave status line not found — capture");
+                }
+                return;
+            }
+            var sb = new System.Text.StringBuilder();
+            foreach (var tmp in go.GetComponentsInChildren<TMPro.TMP_Text>(false))
+            {
+                if (!Util.RenderedUp(tmp.transform)) continue;
+                string text = SpeechService.Clean(tmp.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                if (sb.Length > 0) sb.Append(' ');
+                sb.Append(text);
+            }
+            if (sb.Length > 0)
+                SpeechService.Say(sb.Append('.').ToString(), Priority.Queued, "pause");
+        }
+
+        /// <summary>Surface swap out of inventory browse (owner ruling
+        /// 2026-08-02): M/G/U auto-close the strip (the native Deactivate) and
+        /// fall through to their normal action — the underlying floor is a
+        /// gameplay floor by construction (the strip only browses there).</summary>
+        private static Mode SwapOutOfInventory(Mode mode)
+        {
+            if (mode != Mode.Inventory) return mode;
+            GameQueries.InventoryToggle();
+            return Mode.Station; // stand-in for "a gameplay floor" in the scoping checks
+        }
+
         private static void MapKey()
         {
-            var mode = ModeModel.Current();
+            var mode = SwapOutOfInventory(ModeModel.Current());
             if (mode == Mode.Map) { GameQueries.MapBack(); return; } // toggle out
             if (mode != Mode.Station && mode != Mode.RigRooms && mode != Mode.ActionView)
                 return; // dead out of scope
@@ -314,21 +407,41 @@ namespace Sleeptalker.Sleeper2
         /// same scoping as M (dead off the gameplay floors).</summary>
         private static void CharacterKey()
         {
-            var mode = ModeModel.Current();
+            var mode = SwapOutOfInventory(ModeModel.Current());
             if (mode == Mode.Character) { GameQueries.CharacterBack(); return; }
             if (mode != Mode.Station && mode != Mode.RigRooms && mode != Mode.ActionView)
                 return;
             GameQueries.CharacterBack(); // the toggle event opens from Idle too
         }
 
+        /// <summary>G = the Ship toggle's native click WHERE THE GAME DRAWS THE
+        /// BUTTON; everywhere else silent-dead (owner ruling 2026-08-02 — no
+        /// unavailability announce; the log keeps the evidence). The toggle
+        /// itself is the whole jump: the game swaps the UI side AND zooms the
+        /// camera down to the rig locale, so the mod adds nothing on top.</summary>
+        /// <summary>P = the push two-press (owner ruling 2026-08-02, the push
+        /// vocabulary session — supersedes the raw-button-click provisional,
+        /// which bypassed the game's confirm stage, D20 §g): PushFlow drives
+        /// the Push System FSM's own event ladder — press 1 arms and speaks
+        /// the rendered confirm box, press 2 fires; dead presses speak their
+        /// reason from the state dial. The V-row PUSH cell's Enter is the
+        /// same path.</summary>
+        private static void PushKey()
+        {
+            var mode = SwapOutOfInventory(ModeModel.Current());
+            if (mode != Mode.Station && mode != Mode.RigRooms && mode != Mode.ActionView)
+                return;
+            PushFlow.Key();
+        }
+
         private static void RigKey()
         {
-            var mode = ModeModel.Current();
+            var mode = SwapOutOfInventory(ModeModel.Current());
             if (mode != Mode.Station && mode != Mode.RigRooms) return; // dead out of scope
             var ship = GameQueries.ShipToggleButton();
-            if (ship != null) { Navigator.Click(ship); return; }
-            Plugin.Log.LogWarning("[Input] G: no Ship toggle on this floor");
-            SpeechService.Say(Lex.T("rig.unavailable"), Priority.Immediate, "nav");
+            if (ship != null && ship.activeInHierarchy && Util.RenderedUp(ship.transform))
+            { Navigator.Click(ship); return; }
+            Plugin.Log.LogInfo("[Input] G: Ship toggle not drawn here — silent");
         }
 
         /// <summary>F1 — contextual help (CS1 KeyScope idiom, minimal form): the
@@ -351,6 +464,7 @@ namespace Sleeptalker.Sleeper2
                 case Mode.Map: keys = Lex.T("help.map"); break;
                 case Mode.Character: keys = Lex.T("help.character"); break;
                 case Mode.DriveLog: keys = Lex.T("help.journal"); break;
+                case Mode.Inventory: keys = Lex.T("help.inventory"); break;
                 case Mode.Pause:
                     keys = Lex.T(OptionsReview.IsActive() ? "help.options"
                         : GuideReader.IsActive() ? "help.guide" : "help.native");

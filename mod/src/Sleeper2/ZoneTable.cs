@@ -197,6 +197,7 @@ namespace Sleeptalker.Sleeper2
         public static void Tick()
         {
             VerifyTick();
+            DescWatchTick();
             if (!_entered) return;
             var mode = ModeModel.Current();
             bool onZoneFloor = mode == Mode.Station || mode == Mode.RigRooms;
@@ -453,9 +454,59 @@ namespace Sleeptalker.Sleeper2
             var nodes = Nodes();
             if (row >= nodes.Count) return OpSpeech(row);
             if (row < 0) return Lex.T("zone.empty");
-            if (col <= 0) return CompressedReport(nodes[row]);
+            if (col <= 0)
+            {
+                var node = nodes[row];
+                // Description render race (log finding 2026-08-02: ~8 rows
+                // spoke truncated on arrival, complete on a re-read — the
+                // billboard populates a beat after the hover). An empty
+                // description arms a short follow-up watch that speaks it
+                // alone the frame it draws; the arrival read stays instant.
+                if (string.IsNullOrEmpty(StationAtlas.ReadDescription(node)))
+                {
+                    _descWatchButton = node.Button;
+                    _descWatchDeadline = Time.unscaledTime + 1f;
+                }
+                else
+                {
+                    _descWatchButton = null;
+                }
+                return CompressedReport(node);
+            }
             var facet = StationAtlas.ReadNameFacet(nodes[row]);
             return NameCell(facet) + " " + CellRead(row, col);
+        }
+
+        // The description follow-up watch (one row at a time, keyed by the
+        // node's stable Button object — Node instances rebuild on the cache
+        // window; a row change or table exit drops it, so only the row the
+        // cursor still sits on may complete late).
+        private static GameObject _descWatchButton;
+        private static float _descWatchDeadline;
+
+        private static void DescWatchTick()
+        {
+            if (_descWatchButton == null) return;
+            if (!_entered) { _descWatchButton = null; return; }
+            var nodes = Nodes();
+            int row = Table.Row;
+            if (row < 0 || row >= nodes.Count || nodes[row].Button != _descWatchButton)
+            {
+                _descWatchButton = null;
+                return;
+            }
+            string desc = StationAtlas.ReadDescription(nodes[row]);
+            if (!string.IsNullOrEmpty(desc))
+            {
+                _descWatchButton = null;
+                SpeechService.Say(desc + ".", Priority.Queued, "zone");
+                return;
+            }
+            if (Time.unscaledTime >= _descWatchDeadline)
+            {
+                // Honest-empty: some nodes simply render no description.
+                _descWatchButton = null;
+            }
         }
 
         /// <summary>Facet browse: header-labeled cell, stable geometry — an empty
