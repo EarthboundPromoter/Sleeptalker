@@ -34,6 +34,11 @@ namespace Sleeptalker.Sleeper2
             FocusPatch.MarkSettled();
             GameQueries.EnsureGamepadMode();
 
+            // The F1 key sheet owns the table grammar while open (owner
+            // design 2026-08-03); a foreign key retires it silently and
+            // falls through to its owner below.
+            if (HelpTable.HandleKeys()) return;
+
             // --- Response menu: number picks + vertical remap over the horizontal
             //     graph (CS1 idiom; CS2 response layout verify-live). A tutorial
             //     popup takes focus OVER an open menu (live finding: Skill Check
@@ -245,7 +250,9 @@ namespace Sleeptalker.Sleeper2
 
             if (Input.GetKeyDown(KeyCode.Backspace)) { ResolveCancel(); return; }
             if (Input.GetKeyDown(KeyCode.Z)) { SpeechService.RepeatLast(); return; }
-            if (Input.GetKeyDown(KeyCode.F1)) { SpeakHelp(); return; }
+            // N = census replay (CS1 key convention, ported with the census).
+            if (Input.GetKeyDown(KeyCode.N)) { StationCensus.SpeakLast(); return; }
+            if (Input.GetKeyDown(KeyCode.F1)) { HelpTable.Toggle(); return; }
             if (Input.GetKeyDown(KeyCode.F3)) { Diag.IncidentDump("F3"); return; }
         }
 
@@ -328,7 +335,7 @@ namespace Sleeptalker.Sleeper2
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
             KeyCode.Return, KeyCode.KeypadEnter, KeyCode.Space, KeyCode.Backspace,
             KeyCode.V, KeyCode.M, KeyCode.G, KeyCode.J, KeyCode.U, KeyCode.I, KeyCode.P,
-            KeyCode.Slash,
+            KeyCode.N, KeyCode.Slash,
             KeyCode.Z, KeyCode.F1, KeyCode.F3,
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
@@ -444,36 +451,8 @@ namespace Sleeptalker.Sleeper2
             Plugin.Log.LogInfo("[Input] G: Ship toggle not drawn here — silent");
         }
 
-        /// <summary>F1 — contextual help (CS1 KeyScope idiom, minimal form): the
-        /// current mode and the keys live on it. Grows into the full KeyScope
-        /// table as surfaces accumulate.</summary>
-        private static void SpeakHelp()
-        {
-            var mode = ModeModel.Current();
-            string keys;
-            switch (mode)
-            {
-                case Mode.Station:
-                case Mode.RigRooms:
-                case Mode.ActionView:
-                    keys = Lex.T(TopBarTable.Entered ? "help.topbar" : "help.table");
-                    break;
-                case Mode.Tutorial: keys = Lex.T("help.tutorial"); break;
-                case Mode.Conversation: keys = Lex.T("help.conversation"); break;
-                case Mode.DiceAllocation: keys = Lex.T("help.dice"); break;
-                case Mode.Map: keys = Lex.T("help.map"); break;
-                case Mode.Character: keys = Lex.T("help.character"); break;
-                case Mode.DriveLog: keys = Lex.T("help.journal"); break;
-                case Mode.Inventory: keys = Lex.T("help.inventory"); break;
-                case Mode.Pause:
-                    keys = Lex.T(OptionsReview.IsActive() ? "help.options"
-                        : GuideReader.IsActive() ? "help.guide" : "help.native");
-                    break;
-                default: keys = Lex.T("help.native"); break;
-            }
-            SpeechService.Say(Lex.T("mode." + mode.ToString().ToLowerInvariant())
-                + ". " + keys, Priority.Immediate, "query");
-        }
+        // F1 help is the invisible key table now (HelpTable, owner design
+        // 2026-08-03) — the prose SpeakHelp read retired with it.
 
         /// <summary>CS1 idiom: response buttons are named "Response: " + rendered text.
         /// If CS2 names differ, the miss is logged and spoken — verify-live seam.</summary>

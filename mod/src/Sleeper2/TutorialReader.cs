@@ -115,6 +115,12 @@ namespace Sleeptalker.Sleeper2
         private static Transform _popupPending;  // popup-class toast awaiting its render
         private static float _popupSince;
 
+        /// <summary>A popup-class toast has triggered but not yet drawn (and so
+        /// not yet enqueued). Consumers that must speak AFTER the toast (the
+        /// census beat tail, owner ruling 2026-08-03) stand down while true —
+        /// once the toast enqueues, ordinary queue order holds.</summary>
+        internal static bool PopupInFlight => _popupPending != null;
+
         /// <summary>Scene teardown (sync pass HIGH-1): a destroyed pending or
         /// adopted panel reads as Unity fake-null, which made every release
         /// branch in Tick unreachable — the trigger-time modal claim then held

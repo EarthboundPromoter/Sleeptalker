@@ -106,6 +106,13 @@ namespace Sleeptalker.Sleeper2
 
         public static void Init()
         {
+            // Crew task dial (owner ruling 2026-08-03 — the selection was
+            // unvoiced): "+ FUEL"/"+ SUPPLIES"/"+ CRYO" are the dial's
+            // resting selection states (live FSM capture of record); entry
+            // is the change moment. Announce only a CHANGED selection — rig
+            // re-activation replays the resting state.
+            foreach (var state in new[] { "+ FUEL", "+ SUPPLIES", "+ CRYO" })
+                FsmSignals.Subscribe(null, state, OnTaskDial);
             Table.OnRowArrive = (prev, row) =>
             {
                 var nodes = Nodes();
@@ -198,6 +205,7 @@ namespace Sleeptalker.Sleeper2
         {
             VerifyTick();
             DescWatchTick();
+            TaskAnnounceTick();
             if (!_entered) return;
             var mode = ModeModel.Current();
             bool onZoneFloor = mode == Mode.Station || mode == Mode.RigRooms;
@@ -372,12 +380,110 @@ namespace Sleeptalker.Sleeper2
                     _ops.Add(new OpRow
                     {
                         Target = go,
-                        Speech = () => (Describe.FirstText(go) ?? go.name)
-                            + Lex.T("topbar.button-suffix"),
+                        Speech = () => CrewTaskSpeech(go),
                     });
                 }
             }
             return _ops;
+        }
+
+        // ---------- Crew task selection voice (owner ruling 2026-08-03:
+        // speak the active choice persistently on focus, and what it offers
+        // per the game's render — the selected row's gold EFFECT chip,
+        // "+ SUPPLIES", screenshot + live hierarchy of record) ----------
+
+        private static string _taskAnnouncedFor;   // last-known resting state
+        private static bool _taskAnnouncePending;
+        private static float _taskPendingSince;
+
+        private static void OnTaskDial(PlayMakerFSM fsm, string state)
+        {
+            // The dial is the Crew Assignment system's FSM (mechanism key:
+            // it carries the Crew Tally roll-call var; Find* — Get*
+            // auto-creates, post-mortem 2026-08-03).
+            if (fsm == null || fsm.FsmVariables.FindFsmFloat("Crew Tally") == null)
+                return;
+            if (_taskAnnouncedFor == null) { _taskAnnouncedFor = state; return; }
+            if (state == _taskAnnouncedFor) return;
+            _taskAnnouncedFor = state;
+            _taskAnnouncePending = true;
+            _taskPendingSince = Time.unscaledTime;
+        }
+
+        /// <summary>The chip renders a beat behind the dial (the SFX
+        /// interlude) — the announce fires the frame the render lands, with
+        /// a loud 2s backstop that speaks from the dial state itself.</summary>
+        private static void TaskAnnounceTick()
+        {
+            if (!_taskAnnouncePending) return;
+            var row = SelectedTaskRow(out string offer);
+            if (row != null && offer != null)
+            {
+                _taskAnnouncePending = false;
+                string label = Describe.FirstText(row) ?? row.name;
+                SpeechService.Say(Lex.T("zone.active-task") + ": " + label
+                    + ", " + offer + ".", Priority.Queued, "zone");
+            }
+            else if (Time.unscaledTime - _taskPendingSince > 2f)
+            {
+                _taskAnnouncePending = false;
+                Plugin.Log.LogWarning(
+                    "[Zone] task chip never rendered — dial-state announce");
+                SpeechService.Say(Lex.T("zone.active-task") + ": "
+                    + TranscodePlus(_taskAnnouncedFor) + ".",
+                    Priority.Queued, "zone");
+            }
+        }
+
+        /// <summary>Crew task row read: the selected task appends its state
+        /// and offering — "SOURCE SUPPLIES button. Active task, plus
+        /// SUPPLIES." — persistently, from the rendered chip.</summary>
+        private static string CrewTaskSpeech(GameObject go)
+        {
+            string label = (Describe.FirstText(go) ?? go.name)
+                + Lex.T("topbar.button-suffix");
+            string offer = CrewTaskOffer(go.transform);
+            return offer == null ? label
+                : label + " " + Lex.T("zone.active-task") + ", " + offer + ".";
+        }
+
+        /// <summary>The selected task's rendered offering — the row's EFFECT
+        /// chip child text, leading plus transcoded. Null = not the selected
+        /// row (only the selection renders a chip).</summary>
+        private static string CrewTaskOffer(Transform row)
+        {
+            foreach (Transform child in row)
+            {
+                if (!child.name.StartsWith("EFFECT")) continue;
+                if (!child.gameObject.activeInHierarchy
+                    || !Util.RenderedUp(child)) continue;
+                foreach (var tmp in child.GetComponentsInChildren<TMPro.TMP_Text>(false))
+                {
+                    string text = SpeechService.Clean(tmp.text);
+                    if (!string.IsNullOrEmpty(text)) return TranscodePlus(text);
+                }
+            }
+            return null;
+        }
+
+        private static string TranscodePlus(string text)
+            => text.StartsWith("+")
+                ? Lex.T("glyph.plus") + " " + text.Substring(1).Trim()
+                : text;
+
+        private static GameObject SelectedTaskRow(out string offer)
+        {
+            offer = null;
+            var display = GameObject.Find("Letterbox Canvas/RIG display");
+            var crew = display != null
+                ? display.transform.Find("Crew Assignment/Display") : null;
+            if (crew == null || !crew.gameObject.activeInHierarchy) return null;
+            foreach (var b in crew.GetComponentsInChildren<UnityEngine.UI.Button>(false))
+            {
+                string o = CrewTaskOffer(b.transform);
+                if (o != null) { offer = o; return b.gameObject; }
+            }
+            return null;
         }
 
         /// <summary>End Cycle row: the button's rendered label, its own

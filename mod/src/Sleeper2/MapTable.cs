@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 
 using Sleeptalker.Scaffold;
+using Sleeptalker.Middleware;
 
 namespace Sleeptalker.Sleeper2
 {
@@ -99,6 +100,8 @@ namespace Sleeptalker.Sleeper2
         {
             new Column { HeaderKey = "zone.col.name",
                 Cell = n => NameCell(n), EmptyKey = "map.empty" },
+            new Column { HeaderKey = "map.col.noroute",
+                Cell = NoRouteCell, EmptyKey = "zone.empty" },
             new Column { HeaderKey = "zone.col.clock",
                 Cell = ClockCell, EmptyKey = "zone.clock.none" },
             new Column { HeaderKey = "zone.col.drives",
@@ -132,6 +135,8 @@ namespace Sleeptalker.Sleeper2
             var scratch = new List<string>();
             foreach (var column in Columns)
             {
+                if (column.HeaderKey == "map.col.noroute"
+                    && NoRouteCell(node) == null) continue;
                 if (column.HeaderKey == "zone.col.clock"
                     && !StationAtlas.ReadClock(node, scratch)) continue;
                 if (column.HeaderKey == "zone.col.drives"
@@ -147,6 +152,23 @@ namespace Sleeptalker.Sleeper2
                 if (column.HeaderKey == "map.col.client"
                     && ClientCell(node) == null) continue;
                 cols.Add(column);
+            }
+            // Belt sector rows: one column per contract the sector plate
+            // draws (existence-based; numbered headers when several).
+            int beltCards = BeltCards(node).Count;
+            for (int i = 0; i < beltCards; i++)
+            {
+                int idx = i;
+                cols.Add(new Column
+                {
+                    HeaderKey = "map.col.contract",
+                    Cell = n => BeltCardCell(n, idx),
+                    EmptyKey = "map.empty",
+                    Header = beltCards > 1
+                        ? (Func<StationAtlas.Node, string>)(n =>
+                            Lex.T("map.col.contract") + " " + (idx + 1))
+                        : null,
+                });
             }
             return cols;
         }
@@ -212,6 +234,57 @@ namespace Sleeptalker.Sleeper2
             if (sawCard && _rowsPlane != null && _rowsPlane.name != "Zoomed Out Map UI")
                 LogOnce("[Map] no details card matched marker \"" + name + "\"");
             return null;
+        }
+
+        /// <summary>The rendered contract lines of a BELT sector row (owner
+        /// report 2026-08-03: the belt Sector Display draws the selected
+        /// sector's active contracts as a compact list — name / client /
+        /// risk — and the card-matching cells can never reach it: they match
+        /// cards by the ROW'S rendered name, and no card is named after a
+        /// sector). Belt plane only — the local plane speaks full cards on
+        /// the contract rows themselves. The container must belong to this
+        /// row's sector (the plate follows selection; a mismatch is the
+        /// transition beat and reads as no cells).</summary>
+        private static List<Transform> BeltCards(StationAtlas.Node node)
+        {
+            var cards = new List<Transform>();
+            if (_rowsPlane == null || _rowsPlane.name != "Zoomed Out Map UI") return cards;
+            var container = CardContainer();
+            if (container == null) return cards;
+            // Punctuation-blind match (sync pass HIGH-3: the marker is
+            // "Holm's Rock", the container "Holms Rock Contract Details" —
+            // a plain StartsWith never matches that sector).
+            string sector = SectorOf(node);
+            if (sector == null
+                || !Canon(container.name).StartsWith(Canon(sector))) return cards;
+            bool anyRendered = false;
+            foreach (Transform card in container)
+            {
+                if (!card.gameObject.activeInHierarchy || !Util.RenderedUp(card)) continue;
+                anyRendered = true;
+                if (card.Find("Description") == null) continue; // the Labels header block
+                if (CardText(card, "Name") == null) continue;   // nothing drawn to speak
+                cards.Add(card);
+            }
+            if (anyRendered && cards.Count == 0)
+                LogOnce("[Map] belt plate renders but no card shape matched (capture)");
+            return cards;
+        }
+
+        /// <summary>One belt contract cell: exactly the card facts the plate
+        /// draws, in its own left-to-right order (name, client, risk) —
+        /// CardText is render-gated, so an undrawn fact never speaks.</summary>
+        private static string BeltCardCell(StationAtlas.Node node, int index)
+        {
+            var cards = BeltCards(node);
+            if (index >= cards.Count) return null;
+            var parts = new List<string>(3);
+            foreach (string child in new[] { "Name", "Client", "Type" })
+            {
+                string text = CardText(cards[index], child);
+                if (text != null) parts.Add(text);
+            }
+            return parts.Count > 0 ? string.Join(". ", parts) + "." : null;
         }
 
         private static Transform CardContainer()
@@ -325,21 +398,29 @@ namespace Sleeptalker.Sleeper2
 
         public static void Init()
         {
+            // Denial states exit within one PlayMaker update (sync pass
+            // MED-6) — entry signals are the reliable catch; the poll in
+            // BlockWatchTick stays as fallback.
+            FsmSignals.Subscribe(null, "BLOCKED", (fsm, s) => OnDenialState(fsm, false));
+            FsmSignals.Subscribe(null, "DEBRIS", (fsm, s) => OnDenialState(fsm, true));
+
             Table.OnRowArrive = (prev, row) =>
             {
                 var rows = Rows();
                 if (row < 0 || row >= rows.Count) return;
                 var node = rows[row].Node;
-                if (node == null || node.Button == null || node.IsHere) return;
+                if (node == null) return;
+                // Belt camera BEFORE selection: the scroll view never chases
+                // selection (owner report 2026-08-03 — the CAUTION of record
+                // proven out; details raised on an offscreen node, camera
+                // parked). The pan puts the marker on screen first.
+                PanBeltTo(node);
+                if (node.Button == null || node.IsHere) return;
                 if (!node.Button.activeInHierarchy) return;
                 var es = EventSystem.current;
                 if (es == null || es.currentSelectedGameObject == node.Button) return;
-                // The map's own follow: plain selection — the scroll view chases
-                // it and the marker mirrors it (Selected behaves like hover, so
-                // the billboard renders before the facet reads). CAUTION of
-                // record: off-screen markers drop CanvasGroup.interactable and
-                // ping the global Reselector — ride capture whether selection
-                // lands after the scroll chase.
+                // Selection raises the billboard (Selected behaves like hover,
+                // so the billboard renders before the facet reads).
                 _selectEchoUntil = Time.unscaledTime + 1.5f;
                 es.SetSelectedGameObject(node.Button);
             };
@@ -396,6 +477,17 @@ namespace Sleeptalker.Sleeper2
         /// owns both Check Fuel and Travel states) sitting in the commit tail.
         /// Mechanism-class matched, never named. The render-first alternative
         /// (the screen Fader) pends its identity capture at ride.</summary>
+        // The FULL decoded commit chain (D21 + sync pass HIGH-2 2026-08-03:
+        // the old four-state list missed the 2.5s Wait and the whole TRN
+        // chain — Enter stayed live mid-commit and TRN travels spoke a wrong
+        // "Map closed" over their cutscene load).
+        private static readonly HashSet<string> CommitTailStates = new HashSet<string>
+        {
+            "Travel Confirm?", "Wait", "TRN?",
+            "Travel", "LOAD", "End Cycle", "Fade Up",
+            "Travel 2", "LOAD 2", "End Cycle 2", "Fade Up 2",
+        };
+
         private static bool TravelCommitInFlight()
         {
             var rows = Rows();
@@ -405,9 +497,7 @@ namespace Sleeptalker.Sleeper2
                 if (node == null || node.Button == null) continue;
                 foreach (var fsm in node.Button.GetComponents<PlayMakerFSM>())
                 {
-                    string state = fsm.ActiveStateName;
-                    if (state != "Travel Confirm?" && state != "Travel"
-                        && state != "End Cycle" && state != "Fade Up") continue;
+                    if (!CommitTailStates.Contains(fsm.ActiveStateName)) continue;
                     if (!HasStates(fsm, "Check Fuel", "Travel")) continue;
                     return true;
                 }
@@ -469,6 +559,19 @@ namespace Sleeptalker.Sleeper2
             }
             BlockWatchTick();
             SubWindowWatchTick();
+            VectorAuditTick();
+            // Focus follows the game (owner design 2026-08-03): if the
+            // reselector or mouse moves the game's selection to another
+            // marker, the table row syncs SILENTLY — FocusPatch already
+            // speaks the game-driven move. STRICT match only, and never
+            // while the cursor stands on a buttonless row (sync pass HIGH-1:
+            // ops and you-are-here rows leave selection parked on the last
+            // marker, and the 0-fallback yanked the cursor there — Enter
+            // then committed the wrong row; excursion selections match no
+            // marker and must not re-anchor either).
+            int selRow = RowOfSelectedStrict();
+            if (selRow >= 0 && selRow != Table.Row && CurrentRowAnchored())
+                Table.Reset(selRow);
             var plane = StationAtlas.ActiveMapPlane();
             if (plane == null) return;                    // the Trans beat between planes
             if (plane.name != "Zoomed Out Map UI") _localSector = SectorOfPlane(plane);
@@ -484,8 +587,70 @@ namespace Sleeptalker.Sleeper2
             _lastPlane = plane;
             _builtAt = -1f;
             _entered = false;
+            _lastPanState = null; // zoom flip: re-arm the belt camera write
             Table.Reset();
             Table.Say(PlaneLabel(plane));
+        }
+
+        // ---------- Belt camera (owner report 2026-08-03: table nav must
+        // drive the camera like the hub table does — D17 doctrine, the game's
+        // own machinery) ----------
+
+        // The Scroll View FSM is the game's own pan machine (decode of
+        // record: yaml 30181): "Get Location" self-routes to the SHIP's
+        // sector at open (its events are useless for arbitrary targets), and
+        // each sector state runs the authored EaseFloat pan on both scroll
+        // axes PLUS that sector's detail activation batch. Entering the
+        // state IS the native transit — targets, easing, and detail
+        // animation all the game's own; we write once per row change.
+        private const string ScrollViewPath =
+            "Letterbox Canvas/Map Screen/Moving Map Zoomer (DOES NOT MOVE)/Scroll View";
+        private static string _lastPanState;
+
+        private static void PanBeltTo(StationAtlas.Node node)
+        {
+            var plane = StationAtlas.ActiveMapPlane();
+            if (plane == null || plane.name != "Zoomed Out Map UI") return;
+            string sector = SectorOf(node);
+            if (string.IsNullOrEmpty(sector)) return;
+            var go = GameObject.Find(ScrollViewPath);
+            var fsm = go != null ? go.GetComponent<PlayMakerFSM>() : null;
+            if (fsm == null)
+            {
+                LogOnce("[Map] Scroll View FSM missing — belt camera stays put");
+                return;
+            }
+            // Sector label → state name, punctuation-blind ("Holm's Rock"
+            // renders the apostrophe; the state is "Holms Rock"). Unmatched
+            // sectors log loudly and stay put (story markers may have no
+            // authored pan target).
+            string target = null;
+            string want = Canon(sector);
+            foreach (var s in fsm.FsmStates)
+                if (Canon(s.Name) == want) { target = s.Name; break; }
+            if (target == null)
+            {
+                LogOnce("[Map] no scroll state for sector \"" + sector
+                    + "\" — belt camera stays put");
+                return;
+            }
+            // Write-once per row change (D17): never re-enter the state we
+            // last wrote — replaying the activation batch buys nothing.
+            if (target == _lastPanState || fsm.ActiveStateName == target)
+            {
+                _lastPanState = target;
+                return;
+            }
+            _lastPanState = target;
+            fsm.SetState(target);
+        }
+
+        private static string Canon(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s)
+                if (char.IsLetterOrDigit(c)) sb.Append(char.ToUpperInvariant(c));
+            return sb.ToString();
         }
 
         // The hub name the map opened over (sector of the local plane — the
@@ -503,9 +668,7 @@ namespace Sleeptalker.Sleeper2
             foreach (var fsm in _lastCommitButton.GetComponents<PlayMakerFSM>())
             {
                 if (!HasStates(fsm, "Check Fuel", "Travel")) continue;
-                string s = fsm.ActiveStateName;
-                return s == "Travel Confirm?" || s == "Travel"
-                    || s == "End Cycle" || s == "Fade Up";
+                return CommitTailStates.Contains(fsm.ActiveStateName);
             }
             return false;
         }
@@ -522,6 +685,7 @@ namespace Sleeptalker.Sleeper2
             _subWindow = null;
             _lastCommitButton = null;
             _localSector = null;
+            _lastPanState = null; // reopen snaps to the ship; our write memory is stale
             Table.Reset();
         }
 
@@ -657,12 +821,44 @@ namespace Sleeptalker.Sleeper2
             if (!_blockWatch.activeInHierarchy) { _blockWatch = null; return; }
             foreach (var fsm in _blockWatch.GetComponents<PlayMakerFSM>())
             {
-                if (fsm.ActiveStateName != "BLOCKED") continue;
+                // Hazard denials land in DEBRIS, not BLOCKED (sync pass
+                // MED-6); both exit within a frame, so the entry
+                // subscriptions in Init are the primary catch — this poll
+                // is the fallback.
+                string state = fsm.ActiveStateName;
+                if (state != "BLOCKED" && state != "DEBRIS") continue;
                 if (!HasStates(fsm, "Check Fuel", "Travel")) continue; // pipeline class
                 _blockWatch = null;
-                Table.Say(BlockedSpeech(fsm));
+                Table.Say(state == "DEBRIS" ? DebrisSpeech() : BlockedSpeech(fsm));
                 return;
             }
+        }
+
+        /// <summary>Hazard-denial composition: "Blocked." plus the hazard
+        /// class the vector line settled on — the line's state is the only
+        /// place the game distinguishes WHY (D21; no text renders).</summary>
+        private static string DebrisSpeech()
+        {
+            string cls = null;
+            if (_vectorFsm != null)
+                switch (_vectorFsm.ActiveStateName)
+                {
+                    case "Blocked Debris": cls = Lex.T("map.block.debris"); break;
+                    case "Blocked Rad": cls = Lex.T("map.block.radiation"); break;
+                    case "Blocked Blockade": cls = Lex.T("map.block.blockade"); break;
+                    case "Blocked Bounty": cls = Lex.T("map.block.bounty"); break;
+                }
+            return cls != null
+                ? Lex.T("map.blocked") + " " + cls : Lex.T("map.blocked");
+        }
+
+        private static void OnDenialState(PlayMakerFSM fsm, bool debris)
+        {
+            if (_blockWatch == null || fsm == null
+                || fsm.gameObject != _blockWatch) return;
+            if (!HasStates(fsm, "Check Fuel", "Travel")) return;
+            _blockWatch = null;
+            Table.Say(debris ? DebrisSpeech() : BlockedSpeech(fsm));
         }
 
         /// <summary>Blocked-travel composition (owner ruling 2026-08-01): when
@@ -715,6 +911,179 @@ namespace Sleeptalker.Sleeper2
             return sb.ToString();
         }
 
+        // ---------- Reachability mirror (owner design 2026-08-03; D21) ----------
+
+        private static readonly Dictionary<StationAtlas.Node, string> _noRoute
+            = new Dictionary<StationAtlas.Node, string>();
+        private static readonly Dictionary<StationAtlas.Node, string> _hazardMirror
+            = new Dictionary<StationAtlas.Node, string>();
+        private static readonly Dictionary<StationAtlas.Node, int> _fuelSort
+            = new Dictionary<StationAtlas.Node, int>();
+        private static readonly RaycastHit2D[] _hits = new RaycastHit2D[32];
+        // Audited verdicts (owner ruling 2026-08-03: the game's own drawn line
+        // WINS over the mirror wherever it has settled — render first, backing
+        // second; the Holm's Rock false "Debris field" class). Keyed by node
+        // NAME (nodes rebuild per query); "" = audited clear. Cleared when the
+        // route origin changes — every verdict is origin-relative.
+        private static readonly Dictionary<string, string> _lineOverride
+            = new Dictionary<string, string>();
+        private static string _overrideOrigin;
+
+        /// <summary>The Can't-travel cell: why this node is out of reach.
+        /// Fuel speaks the standing composition (pipeline order — the game
+        /// checks fuel before the line); hazards speak their class.</summary>
+        private static string NoRouteCell(StationAtlas.Node node)
+            => _noRoute.TryGetValue(node, out string r) ? r : null;
+
+        private static string NoRouteReason(Vector3 from, StationAtlas.Node node, out int cost)
+        {
+            cost = int.MaxValue;
+            string costStr = FuelCostOf(node);
+            if (costStr != null && int.TryParse(costStr, out int c)) cost = c;
+            else LogOnce("[Map] belt node \"" + node.Name
+                + "\" publishes no fuel cost — sorted last");
+            // Hazard verdict computed unconditionally: the live-line audit
+            // compares it even when fuel is the spoken reason.
+            string hazard = HazardBlock(from, node.Root.position);
+            if (node.Name != null
+                && _lineOverride.TryGetValue(node.Name, out string audited))
+                hazard = audited.Length == 0 ? null : audited;
+            _hazardMirror[node] = hazard ?? "";
+            // Unrounded fuel (sync pass MED-7: travel deducts a float — the
+            // game's own Check Fuel is a FloatCompare, so is the mirror).
+            float? fuel = LuaStore.NumF("Player_Fuel");
+            string fuelReason = fuel.HasValue && cost != int.MaxValue && cost > fuel.Value
+                ? Lex.T("map.blocked.fuel") + " " + Lex.T("map.requires")
+                    + " " + cost + " " + Lex.T("map.fuel-unit")
+                : null;
+            // BOTH reasons when both hold (owner bug 2026-08-03: every
+            // blocked node was also fuel-short, so fuel-first precedence
+            // hid every hazard — fuel changes per cycle, hazards are the
+            // structural fact). Fuel keeps the game's check order, the
+            // hazard follows.
+            if (fuelReason != null && hazard != null) return fuelReason + " " + hazard;
+            return fuelReason ?? hazard;
+        }
+
+        /// <summary>The hazard class blocking the straight route, mirrored
+        /// over the game's own colliders (D21: the vector line's tag classes,
+        /// haznav bypasses debris, transponder bypasses bounty). First hit
+        /// along the route wins, like the line's first contact. Null =
+        /// clear.</summary>
+        private static string HazardBlock(Vector3 from, Vector3 to)
+        {
+            bool haznav = (LuaStore.NumF("Ship_Haznav") ?? 0f) >= 1f;
+            bool transponder = (LuaStore.NumF("Ship_Transponder") ?? 0f) >= 1f;
+            // Exact endpoint — NO overshoot. The 1.1 factor inferred from
+            // the Aim leg proved wrong in world units (live audit
+            // 2026-08-03: the overshot mirror blocked a node the real line
+            // cleared — the game's sweep length is screen-scaled). The
+            // audit watches for the opposite error.
+            var filter = default(ContactFilter2D);
+            filter.NoFilter();
+            filter.useTriggers = true;
+            int count = Physics2D.Linecast(from, to, filter, _hits);
+            for (int i = 0; i < count && i < _hits.Length; i++)
+            {
+                var col = _hits[i].collider;
+                if (col == null) continue;
+                switch (col.tag)
+                {
+                    case "Map Debris":
+                        if (!haznav) return Lex.T("map.block.debris");
+                        break;
+                    case "Map Radiation": return Lex.T("map.block.radiation");
+                    case "Map Blockade": return Lex.T("map.block.blockade");
+                    case "Map Bounty":
+                        if (!transponder) return Lex.T("map.block.bounty");
+                        break;
+                }
+            }
+            return null;
+        }
+
+        private static Vector3 ShipAnchor()
+        {
+            var g = HutongGames.PlayMaker.FsmVariables.GlobalVariables
+                .GetFsmGameObject("Sleeper Vector");
+            return g != null && g.Value != null
+                ? g.Value.transform.position : Vector3.zero;
+        }
+
+        // The live vector line audits the mirror: whenever it settles a
+        // verdict for the focused node, disagreement logs loudly AND the line
+        // wins (owner ruling 2026-08-03) — the verdict overrides the mirror
+        // for that node and the rows rebuild so sections and reason cells
+        // recompose. Staleness self-heals: an override that later disagrees
+        // with the line (upgrade bought mid-view) re-audits the same way.
+        private static PlayMakerFSM _vectorFsm;
+        private static StationAtlas.Node _auditNode;
+        private static bool _auditDone;
+        private static bool _auditArmed;
+
+        private static void VectorAuditTick()
+        {
+            if (_rowsPlane == null || _rowsPlane.name != "Zoomed Out Map UI") return;
+            int row = Table.Row;
+            if (row < 0 || row >= _rows.Count) return;
+            var node = _rows[row].Node;
+            if (node == null || node.IsHere) { _auditNode = null; return; }
+            if (_auditNode != node)
+            {
+                _auditNode = node;
+                _auditDone = false;
+                // Re-aim takes ≥1 frame after selection moves (sync pass
+                // MED-4: the audit read the PREVIOUS node's resting verdict
+                // and attributed it here). Arm only after the line visibly
+                // left its settled state for this node.
+                _auditArmed = false;
+            }
+            if (_auditDone) return;
+            if (_vectorFsm == null)
+            {
+                var go = GameObject.Find("Letterbox Canvas/Map Screen/Sleeper Location");
+                _vectorFsm = go != null ? go.GetComponent<PlayMakerFSM>() : null;
+                if (_vectorFsm == null) return;
+            }
+            string lineClass;
+            switch (_vectorFsm.ActiveStateName)
+            {
+                // Finish Vector Haz Nav / Finish Vector Transponder are NOT
+                // terminal (sync pass MED-4: both keep watching for further
+                // hazards) — they arm like any transit state.
+                case "Vector Good": lineClass = ""; break;
+                case "Blocked Debris": lineClass = Lex.T("map.block.debris"); break;
+                case "Blocked Rad": lineClass = Lex.T("map.block.radiation"); break;
+                case "Blocked Blockade": lineClass = Lex.T("map.block.blockade"); break;
+                case "Blocked Bounty": lineClass = Lex.T("map.block.bounty"); break;
+                default: _auditArmed = true; return; // aiming/transit for THIS node
+            }
+            if (!_auditArmed) return; // stale verdict from the previous aim
+            _auditDone = true;
+            string mirror = _hazardMirror.TryGetValue(node, out string h) ? h : "";
+            // Verdict logs on AGREEMENT too (ride finding 2026-08-03: a
+            // silent audit can't be told apart from one that never settled —
+            // the Holm's Rock re-test was inconclusive for that reason).
+            if (mirror == lineClass)
+                Plugin.Log.LogInfo("[Map] line audit settled: " + node.Name
+                    + " = " + (lineClass == "" ? "clear" : lineClass)
+                    + " — mirror agrees");
+            if (mirror != lineClass)
+            {
+                Plugin.Log.LogWarning("[Map] REACH MIRROR MISMATCH on \""
+                    + node.Name + "\": line says \""
+                    + (lineClass == "" ? "clear" : lineClass)
+                    + "\", mirror said \""
+                    + (mirror == "" ? "clear" : mirror)
+                    + "\" — line wins, row corrected");
+                if (node.Name != null)
+                {
+                    _lineOverride[node.Name] = lineClass;
+                    _builtAt = -1f; // sections and reason cells recompose
+                }
+            }
+        }
+
         // ---------- Rows ----------
 
         private static List<RowModel> Rows()
@@ -739,31 +1108,70 @@ namespace Sleeptalker.Sleeper2
                 var nodes = StationAtlas.BuildMapNodes(plane);
                 if (plane.name == "Zoomed Out Map UI")
                 {
-                    // Belt: sectors as sections, ordered by the map's own
-                    // geometry (group centroid left-to-right, markers likewise).
-                    var groups = new List<Group>();
+                    // Reachability-first belt table (owner design 2026-08-03):
+                    // current location on top, in-reach nodes cheapest-fuel-
+                    // first, out-of-reach after them with a Can't-travel
+                    // reason cell. The game stores NO per-node reachability
+                    // (D21: dials placeholdered, the vector line is per-
+                    // focus) — the mirror reads the SAME inputs the line
+                    // does: the button's published fuel cost vs the store's
+                    // player fuel, and a linecast over the game's own hazard
+                    // colliders. The live line audits the mirror at every
+                    // focus settle (VectorAuditTick).
+                    _noRoute.Clear();
+                    _hazardMirror.Clear();
+                    _fuelSort.Clear();
+                    StationAtlas.Node here = null;
+                    foreach (var n in nodes) if (n.IsHere) { here = n; break; }
+                    // Origin = the game's own line origin (sync pass MED-5:
+                    // 30358 aims FROM the Sleeper Vector object itself); the
+                    // occupied marker is the fallback approximation.
+                    Vector3 from = ShipAnchor();
+                    if (from == Vector3.zero && here != null) from = here.Root.position;
+                    // Audited overrides are origin-relative: a new origin
+                    // (travel landed) invalidates every settled verdict.
+                    string originKey = here != null ? here.Name : from.ToString();
+                    if (originKey != _overrideOrigin)
+                    {
+                        _lineOverride.Clear();
+                        _overrideOrigin = originKey;
+                    }
+                    var reach = new List<StationAtlas.Node>();
+                    var blocked = new List<StationAtlas.Node>();
+                    bool anyCost = false;
                     foreach (var n in nodes)
                     {
-                        string sector = SectorOf(n);
-                        Group g = null;
-                        foreach (var x in groups)
-                            if (x.Sector == sector) { g = x; break; }
-                        if (g == null) { g = new Group { Sector = sector }; groups.Add(g); }
-                        g.Nodes.Add(n);
+                        if (n.IsHere) continue;
+                        string reason = NoRouteReason(from, n, out int cost);
+                        if (cost != int.MaxValue) anyCost = true;
+                        _fuelSort[n] = cost;
+                        if (reason == null) reach.Add(n);
+                        else { _noRoute[n] = reason; blocked.Add(n); }
                     }
-                    foreach (var g in groups)
+                    // Boot beat: the buttons' Cost Setup hasn't published yet
+                    // (log 2026-08-03: every node costless on the first
+                    // build) — don't cache a blind sort; rebuild next call.
+                    if (!anyCost && (reach.Count > 0 || blocked.Count > 0))
+                        _builtAt = -1f;
+                    reach.Sort((a, b) => _fuelSort[a].CompareTo(_fuelSort[b]));
+                    blocked.Sort((a, b) => _fuelSort[a].CompareTo(_fuelSort[b]));
+                    if (here != null)
                     {
-                        g.Nodes.Sort(ByMapPosition);
-                        float sum = 0f;
-                        foreach (var n in g.Nodes) sum += n.Root.position.x;
-                        g.X = sum / g.Nodes.Count;
+                        _sections.Add(Lex.T("map.sec.here"));
+                        _rows.Add(new RowModel { Node = here, Section = _sections.Count - 1 });
                     }
-                    groups.Sort((a, b) => a.X.CompareTo(b.X));
-                    foreach (var g in groups)
+                    if (reach.Count > 0)
                     {
                         int section = _sections.Count;
-                        _sections.Add(g.Sector + Lex.T("map.section.suffix"));
-                        foreach (var n in g.Nodes)
+                        _sections.Add(Lex.T("map.sec.inreach"));
+                        foreach (var n in reach)
+                            _rows.Add(new RowModel { Node = n, Section = section });
+                    }
+                    if (blocked.Count > 0)
+                    {
+                        int section = _sections.Count;
+                        _sections.Add(Lex.T("map.sec.outreach"));
+                        foreach (var n in blocked)
                             _rows.Add(new RowModel { Node = n, Section = section });
                     }
                 }
@@ -877,12 +1285,42 @@ namespace Sleeptalker.Sleeper2
 
         private static int RowOfSelected()
         {
+            int strict = RowOfSelectedStrict();
+            return strict >= 0 ? strict : 0; // entry anchor parks at row 0
+        }
+
+        /// <summary>The row owning the game's current selection, or -1 when
+        /// selection maps to no marker (excursion UI, anchors, sub-windows).
+        /// A stacked sibling's button (the collapse keeps only the topmost
+        /// copy) matches by marker position — same drawn spot, same row.</summary>
+        private static int RowOfSelectedStrict()
+        {
             var selected = Navigator.Current();
-            if (selected == null) return 0;
+            if (selected == null) return -1;
             var rows = Rows();
             for (int i = 0; i < rows.Count; i++)
                 if (rows[i].Node != null && rows[i].Node.Button == selected) return i;
-            return 0; // the anchor (or a sub-window remnant) parks at row 0
+            Transform root = null;
+            for (var p = selected.transform; p != null; p = p.parent)
+                if (p.name.Contains(" Location")) { root = p; break; }
+            if (root == null) return -1;
+            for (int i = 0; i < rows.Count; i++)
+                if (rows[i].Node != null
+                    && (rows[i].Node.Root.position - root.position).sqrMagnitude <= 1f)
+                    return i;
+            return -1;
+        }
+
+        /// <summary>True when the current row owns a selectable marker button
+        /// — the only rows whose game-selection the watchdog may trust as
+        /// "moved away" (ops and you-are-here rows never carry selection).</summary>
+        private static bool CurrentRowAnchored()
+        {
+            var rows = Rows();
+            int row = Table.Row;
+            if (row < 0 || row >= rows.Count) return true;
+            var n = rows[row].Node;
+            return n != null && n.Button != null && !n.IsHere;
         }
 
         // ---------- Speech composition (reads live at speech time) ----------

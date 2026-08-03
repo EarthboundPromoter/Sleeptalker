@@ -274,11 +274,8 @@ namespace Sleeptalker.Sleeper2
             string cursorFocus = state == "Broken" ? null : FocusedTag(dieFsm);
             if (cursorFocus != null) sb.Append(", ").Append(cursorFocus);
             sb.Append('.');
-            if (state != "Broken")
-            {
-                string health = HealthSuffix(dieFsm.transform);
-                if (health != null) sb.Append(' ').Append(health);
-            }
+            string health = HealthSuffix(dieFsm.transform, state == "Broken");
+            if (health != null) sb.Append(' ').Append(health);
             return sb.ToString();
         }
 
@@ -362,14 +359,12 @@ namespace Sleeptalker.Sleeper2
             string focused = state == "Broken" ? null : FocusedTag(fsm);
             if (focused != null) sb.Append(", ").Append(focused);
             sb.Append('.');
-            // Die health below full (owner build 2026-08-02; guide: three
-            // health, break at zero). Deviation-spoken only; a Broken die
-            // already says so. Crew slots have no health family — silent.
-            if (state != "Broken")
-            {
-                string health = HealthSuffix(fsm.transform);
-                if (health != null) sb.Append(' ').Append(health);
-            }
+            // Die health (owner build 2026-08-02; guide: three health, break
+            // at zero). Deviation-spoken both ways: a working die below full,
+            // a broken die above zero (repaired, returns next cycle). Crew
+            // slots have no health family — silent.
+            string health = HealthSuffix(fsm.transform, state == "Broken");
+            if (health != null) sb.Append(' ').Append(health);
             return sb.ToString();
         }
 
@@ -491,17 +486,30 @@ namespace Sleeptalker.Sleeper2
         }
 
         /// <summary>"Health 2 of 3." from the slot's own Dice Health bar (the
-        /// render home; Red at low). Null at full health or where no bar
+        /// render home; Red at low). Deviation-spoken BOTH ways (owner ruling
+        /// 2026-08-02, the repair session): a working die speaks health only
+        /// below full; a broken die speaks health only above zero — repair
+        /// writes the bar the moment the action resolves while the die object
+        /// rests in Broken until the next cycle's reroll releases it (the
+        /// Safe path), and the full pip row is the ONLY render that
+        /// distinguishes a repaired die from a dead one. Null where no bar
         /// exists (crew dice).</summary>
-        private static string HealthSuffix(Transform die)
+        private static string HealthSuffix(Transform die, bool broken = false)
         {
             var slot = die != null ? die.parent : null;
             var bar = slot != null ? slot.Find("Dice Health") : null;
             var fsm = bar != null ? bar.GetComponent<PlayMakerFSM>() : null;
             if (fsm == null) return null;
             var health = fsm.FsmVariables.GetFsmFloat("Health");
-            if (health == null || health.Value >= 3f || health.Value < 0f) return null;
-            return Lex.T("dice.health") + " " + health.Value.ToString("0") + " "
+            if (health == null) return null;
+            // Bounds law (owner ruling 2026-08-02): spoken bounded values
+            // clamp both directions, raw logged when the clamp bites.
+            float value = health.Value < 0f ? 0f : (health.Value > 3f ? 3f : health.Value);
+            if (value != health.Value)
+                LogOnceDice("[Dice] CLAMPED die health: raw " + health.Value
+                    + " spoken as " + value + " (bounds 0..3)");
+            if (broken ? value <= 0f : value >= 3f) return null;
+            return Lex.T("dice.health") + " " + value.ToString("0") + " "
                 + Lex.T("vitals.of") + " 3.";
         }
 

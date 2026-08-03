@@ -86,6 +86,7 @@ namespace Sleeptalker
                 InventoryTable.OnSceneChanged();
                 JournalTable.InvalidateScene();
                 TutorialReader.OnSceneChanged();
+                StationCensus.OnSceneChanged();
             };
 
             _input = new InputManager();
@@ -104,6 +105,7 @@ namespace Sleeptalker
             ActionOutcomes.Init();
             PushFlow.Init();
             CycleGate.Init();
+            StationCensus.Init();
 
             Log.LogInfo("Sleeptalker 0.1.0 loaded.");
             SpeechService.Say("Sleeptalker 0.1.0.", Priority.Queued, "init");
@@ -128,6 +130,7 @@ namespace Sleeptalker
             PushFlow.Tick();
             Vitals.Tick();
             CycleGate.Tick();
+            StationCensus.Tick();
             JournalTable.Tick();
             DialogueColumn.Tick();
             Navigator.Tick();

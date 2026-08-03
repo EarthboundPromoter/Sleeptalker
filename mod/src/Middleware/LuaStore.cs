@@ -146,6 +146,20 @@ namespace Sleeptalker.Middleware
             catch (System.Exception e) { LogFaultOnce(name, e); return null; }
         }
 
+        /// <summary>Unrounded variant for mirrors of the game's own float
+        /// compares (sync pass 2026-08-03: travel deducts an unrounded float —
+        /// a rounded read diverges at half-boundaries).</summary>
+        public static float? NumF(string name)
+        {
+            try
+            {
+                var r = DialogueLua.GetVariable(name);
+                if (!r.hasReturnValue || !r.isNumber) return null;
+                return r.asFloat;
+            }
+            catch (System.Exception e) { LogFaultOnce(name, e); return null; }
+        }
+
         private static string Str(string name)
         {
             try

@@ -42,6 +42,9 @@ namespace Sleeptalker.Sleeper2
         private static float _builtAt = -1f;
         private static bool _entered;
         private static bool _lockedSpoken;
+        private static bool _announcePending;
+        private static float _announceArmedAt;
+        private const float AnnounceBackstop = 1.5f;
 
         private static readonly TableEngine Table = new TableEngine
         {
@@ -83,24 +86,56 @@ namespace Sleeptalker.Sleeper2
 
         public static bool HandleKeys()
         {
-            if (!_entered)
-            {
-                _entered = true;
-                Table.Reset();
-                // The HUB lock speaks window-level on entry (owner ruling 2).
-                string locked = LockedText();
-                if (locked != null && !_lockedSpoken)
-                {
-                    _lockedSpoken = true;
-                    SpeechService.Say(locked, Priority.Queued, "char");
-                }
-                // Current point total on open (owner request 2026-08-02):
-                // the Upgrade Tracker's own rendered text, once per entry.
-                string points = PointsLine();
-                if (points.Length > 0)
-                    SpeechService.Say(points + ".", Priority.Queued, "char");
-            }
+            EnsureEntered();
+            // A key means the window is drawn and readable — flush a pending
+            // announce ahead of whatever this key speaks.
+            if (_announcePending) SpeakEntry(force: true);
             return Table.HandleKeys();
+        }
+
+        private static void EnsureEntered()
+        {
+            if (_entered) return;
+            _entered = true;
+            Table.Reset();
+            _announcePending = true;
+            _announceArmedAt = Time.unscaledTime;
+        }
+
+        /// <summary>Composed load announce (owner ruling 2026-08-03: ONE
+        /// utterance — "Character menu, 3 Points Available." — the points must
+        /// never trail the first focus read as their own line). Entry is driven
+        /// from Tick off the game's open dial (a quiet open must speak — the
+        /// key-driven entry held the line until the NEXT key, ride finding
+        /// 2026-08-03); the dial flips before the tracker text draws, so the
+        /// announce waits for the render moment, bounded by a loud backstop.</summary>
+        private static void SpeakEntry(bool force)
+        {
+            string points = PointsLine();
+            if (!force && points.Length == 0)
+            {
+                var screen = Screen();
+                bool waitworthy = screen == null
+                    || screen.Find("Upgrade Tracker/Points Av") != null;
+                if (waitworthy
+                    && Time.unscaledTime - _announceArmedAt < AnnounceBackstop)
+                    return;
+                if (waitworthy)
+                    Plugin.Log.LogWarning(
+                        "[Char] entry announce backstop — Points Av never drew");
+            }
+            _announcePending = false;
+            SpeechService.Say(
+                Lex.T("char.menu")
+                    + (points.Length > 0 ? ", " + points : "") + ".",
+                Priority.Queued, "char");
+            // The HUB lock speaks window-level on entry (owner ruling 2).
+            string locked = LockedText();
+            if (locked != null && !_lockedSpoken)
+            {
+                _lockedSpoken = true;
+                SpeechService.Say(locked, Priority.Queued, "char");
+            }
         }
 
         /// <summary>Exit ONLY when the window itself closes (the game dial) —
@@ -115,12 +150,15 @@ namespace Sleeptalker.Sleeper2
                 {
                     _entered = false;
                     _lockedSpoken = false;
+                    _announcePending = false;
                     _watchRow = null;
                     _checkAt = -1f;
                     Table.Reset();
                 }
                 return;
             }
+            EnsureEntered();
+            if (_announcePending) SpeakEntry(force: false);
             FeedbackTick();
         }
 

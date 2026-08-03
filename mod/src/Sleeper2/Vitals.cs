@@ -54,6 +54,7 @@ namespace Sleeptalker.Sleeper2
         }
 
         private static readonly List<Channel> Channels = new List<Channel>();
+        private static Channel _contractChannel;
 
         public static void Init()
         {
@@ -128,27 +129,42 @@ namespace Sleeptalker.Sleeper2
             // Contract stress (owner report 2026-08-02; tutorial text of
             // record: "Contracts also have their own CONTRACT STRESS. When
             // this bar is filled the contract will FAIL."). The bar family is
-            // the exact player/crew stress graph — "Derelict Regular Stress",
-            // one standing copy on the Contract Stress Display plus one per
-            // action group (census level4+), all reading the same per-contract
-            // key; the name-keyed cache dedups the copy storm (all copies
-            // render the same title = one key). Registration gives the
-            // change announcements, the V-row readout, AND the two-lane
-            // handoff into resolution reads. Cap: Regular variant = 6 (the
-            // crew-bar idiom; any other variant logs UNKNOWN for capture).
-            Register(new Channel
+            // the exact player/crew stress graph — one standing copy on the
+            // Contract Stress Display plus one per action group (census
+            // level4+), all reading the same per-contract key; the name-keyed
+            // cache dedups the copy storm (all copies render the same title =
+            // one key). MATCH is mechanism-keyed (capture audit 2026-08-03:
+            // bar owners are named per contract — Derelict, Drone, Suit… —
+            // and the old "Derelict" prefix missed every non-Derelict
+            // contract): a contract bar is any stress bar carrying the
+            // INIT-built "Contract Stress Variable" key var. Registration
+            // gives the change announcements, the V-row readout, AND the
+            // two-lane handoff into resolution reads. Cap: the bar FSM's own
+            // clamp constant (decode 2026-08-03: Derelict 12, Drone 4 —
+            // per-contract; the assumed crew-idiom 6 was wrong everywhere).
+            _contractChannel = new Channel
             {
                 Name = Lex.T("vitals.contract-stress"),
-                OwnerPrefix = "Derelict",
-                Match = fsm => fsm.gameObject.name.Contains("Stress"),
+                OwnerPrefix = "",
+                // Find*, never Get* for existence (post-mortem 2026-08-03:
+                // GetFsmXxx AUTO-CREATES missing variables — a Get*-based
+                // existence check is always true, which made this matcher
+                // claim every stress bar incl. the player's).
+                Match = fsm => fsm.gameObject.name.Contains("Stress")
+                    && fsm.FsmVariables.FindFsmString("Contract Stress Variable") != null,
                 UpdateStates = new[] { "Animation and Sound" },
                 Value = fsm => FloatVar(fsm, "Stress"),
-                Max = CrewMax,
+                Max = ContractCap,
                 // Owner ruling 2026-08-02: the bar's own rendered TITLE names
                 // the contract and changes per job — speak it (Name stays the
                 // generic for effect-word matching).
                 SpokenName = ContractStressName,
-            });
+                // Owner design 2026-08-03: every contract-stress read carries
+                // the future crisis points — "x of y. Crises at 9." — with
+                // already-spawned crises excluded.
+                Suffix = CrisisForecast,
+            };
+            Register(_contractChannel);
 
             // Dice health (owner build 2026-08-02; guide-confirmed: three
             // health per die, break at zero, repair costs glitch). The
@@ -187,6 +203,15 @@ namespace Sleeptalker.Sleeper2
                 Value = fsm => FloatVar(fsm, "Health"),
                 Max = fsm => 6f,
             });
+
+            // Crew task payout states (decode 2026-08-03: the Cycle
+            // Controller's per-tier Cryo/Fuel/Supplies states are the ONLY
+            // moment the payout exists — hub-scene cycles only). The
+            // OnCrewPayout guard narrows the generic names to the controller.
+            foreach (var state in new[]
+                { "Cryo", "Fuel", "Supplies", "Cryo 2", "Fuel 2", "Supplies 2",
+                  "Cryo 3", "Fuel 3", "Supplies 3" })
+                FsmSignals.Subscribe(null, state, OnCrewPayout);
 
             // NOT registered (deliberate): the contract-mode "Supplied" child renders a
             // supplies count in the energy area while the Supplies Slot channel may cover
@@ -333,6 +358,12 @@ namespace Sleeptalker.Sleeper2
                 if (capturePending)
                     ActionOutcomes.OfferDelta(key, ch.Name ?? key,
                         value - last, Format(value, ch.Max(fsm)));
+                // Cycle-lane contract stress and resource slots keep their
+                // deltas for the wake summary (owner design 2026-08-03)
+                // instead of vanishing into the silent cache.
+                else if ((ch == _contractChannel || ch.StripRendered)
+                    && value != last)
+                    NoteCycleDelta(key, value - last);
                 ch.LastByName[key] = value;
                 Plugin.Log.LogInfo("[Vitals] stood down (interaction lane): "
                     + key + " -> " + value);
@@ -364,6 +395,7 @@ namespace Sleeptalker.Sleeper2
 
         public static void Tick()
         {
+            PayoutTick();
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var p = _pending[i];
@@ -459,7 +491,8 @@ namespace Sleeptalker.Sleeper2
         /// supplies/cryo render in the BOTTOM strip, so the V table surfaces
         /// only what the top bar draws; the wake summary keeps the full set
         /// (absolute-state composition, not a bar mirror).</summary>
-        public static List<string> Read(bool includeStrip = true)
+        public static List<string> Read(bool includeStrip = true,
+            bool cycleSummary = false)
         {
             var lines = new List<string>();
             foreach (var ch in Channels)
@@ -480,13 +513,135 @@ namespace Sleeptalker.Sleeper2
                     if (ch.AnnounceWhenDrawnOnly && !Util.RenderedUp(fsm.transform))
                         continue;
                     float v = Bounded(ch, fsm, kv.Key, out float m);
-                    string line = kv.Key + " " + Format(v, m) + ".";
+                    string line = ch == _contractChannel && cycleSummary
+                        ? ContractCycleLine(kv.Key, v, m)
+                        : ch.StripRendered && cycleSummary
+                            ? SlotCycleLine(ch, kv.Key, v, m)
+                            : kv.Key + " " + Format(v, m) + ".";
                     string suffix = ch.Suffix != null ? ch.Suffix() : null;
                     if (suffix != null) line += " " + suffix;
                     lines.Add(line);
                 }
             }
             return lines;
+        }
+
+        // Cycle-window deltas (owner design 2026-08-03: contract stress and
+        // crew task payouts get first-class resolution treatment — both land
+        // INSIDE the cycle rollover, where the transition stand-down was
+        // silently caching them away; the wake summary now speaks them in
+        // the delta grammar, factored when a known cause owns them).
+        private sealed class CycleDelta { public float Delta; public float At; }
+        private static readonly Dictionary<string, CycleDelta> _cycleDeltas
+            = new Dictionary<string, CycleDelta>();
+
+        private static void NoteCycleDelta(string key, float delta)
+        {
+            if (_cycleDeltas.TryGetValue(key, out var d)
+                && Time.unscaledTime - d.At < 60f)
+                d.Delta += delta;
+            else
+                _cycleDeltas[key] = new CycleDelta { Delta = delta };
+            _cycleDeltas[key].At = Time.unscaledTime;
+        }
+
+        // Crew task payouts (decode 2026-08-03, Cycle Controller: Crew
+        // Actions → Crew Number tier (<3 / 3 / 4+) → Cryo|Fuel|Supplies
+        // states — a RandomInt roll written straight to the store, NO render
+        // and NO sound anywhere: the variables lane is the only source, per
+        // the render-first law's escape clause, logged here). The roll is
+        // read one tick after the state fires (actions may still be
+        // running at signal time).
+        private static readonly Dictionary<string, CycleDelta> _crewPayouts
+            = new Dictionary<string, CycleDelta>();
+        private static PlayMakerFSM _payoutFsm;
+        private static string _payoutChannel;
+
+        private static void OnCrewPayout(PlayMakerFSM fsm, string state)
+        {
+            // Mechanism key: the Cycle Controller carries the roll var, the
+            // add accumulator AND the crew tally (generic state names like
+            // "Fuel" exist elsewhere — the location dials pass through
+            // "Cryo" at activation and fired this spuriously when the guard
+            // used auto-creating Get* calls, post-mortem 2026-08-03).
+            if (fsm == null
+                || fsm.FsmVariables.FindFsmInt("Random Add") == null
+                || fsm.FsmVariables.FindFsmFloat("To Add") == null
+                || fsm.FsmVariables.FindFsmFloat("Crew Tally") == null) return;
+            _payoutFsm = fsm;
+            _payoutChannel = state.StartsWith("Cryo") ? Lex.T("vitals.cryo")
+                : state.StartsWith("Fuel") ? Lex.T("vitals.fuel")
+                : Lex.T("vitals.supplies");
+        }
+
+        private static void PayoutTick()
+        {
+            if (_payoutFsm == null) return;
+            var fsm = _payoutFsm;
+            _payoutFsm = null;
+            if (fsm.gameObject == null) return;
+            var roll = fsm.FsmVariables.FindFsmInt("Random Add");
+            if (roll == null) return;
+            Plugin.Log.LogInfo("[Vitals] crew task payout: " + _payoutChannel
+                + " +" + roll.Value + " on " + fsm.gameObject.name
+                + " (variables lane — the game renders nothing)");
+            if (roll.Value <= 0) return; // the chance missed: no movement to attribute
+            _crewPayouts[_payoutChannel]
+                = new CycleDelta { Delta = roll.Value, At = Time.unscaledTime };
+        }
+
+        /// <summary>The wake summary's contract stress line: "TITLE up 2,
+        /// crises, now 7 of 12." when the cycle moved it (factor tag only
+        /// when the game's CRISIS count exactly owns the delta — anything
+        /// else speaks plain and logs for capture); the standing absolute
+        /// line otherwise. Consuming read — the V row goes back to
+        /// absolute.</summary>
+        private static string ContractCycleLine(string key, float v, float m)
+        {
+            if (!_cycleDeltas.TryGetValue(key, out var d))
+                return key + " " + Format(v, m) + ".";
+            _cycleDeltas.Remove(key);
+            if (d.Delta == 0f || Time.unscaledTime - d.At > 60f)
+                return key + " " + Format(v, m) + ".";
+            float crises = LuaStore.NumF("CRISIS") ?? 0f;
+            string factor = "";
+            if (d.Delta > 0f && crises > 0f && Mathf.Abs(d.Delta - crises) < 0.01f)
+                factor = ", " + Lex.T(crises >= 2f
+                    ? "vitals.factor-crises" : "vitals.factor-crisis");
+            else if (crises > 0f)
+                LogOnce("[Vitals] cycle contract delta " + d.Delta + " with "
+                    + crises + " crises active — unattributed (capture)");
+            return key + " " + Lex.T(d.Delta > 0f ? "vitals.up" : "vitals.down")
+                + " " + Mathf.Abs(d.Delta).ToString("0.#") + factor
+                + ", " + Lex.T("outcome.now") + " " + Format(v, m) + ".";
+        }
+
+        /// <summary>The wake summary's resource slot line: "FUEL up 2, crew,
+        /// now 4 of 10." when a crew task payout exactly owns the cycle's
+        /// movement; a plain factored-less delta when a payout is in flight
+        /// but doesn't match the movement (mixed causes — logged for
+        /// capture); the standing absolute line for ordinary cycle movement
+        /// (depletion) — the CS1 absolute-totals doctrine holds there.</summary>
+        private static string SlotCycleLine(Channel ch, string key, float v, float m)
+        {
+            bool hasDelta = _cycleDeltas.TryGetValue(key, out var d)
+                && Time.unscaledTime - d.At < 60f && d.Delta != 0f;
+            _cycleDeltas.Remove(key);
+            CycleDelta pay = null;
+            if (ch.Name != null && _crewPayouts.TryGetValue(ch.Name, out pay))
+                _crewPayouts.Remove(ch.Name);
+            if (pay != null && Time.unscaledTime - pay.At > 60f) pay = null;
+            if (!hasDelta || pay == null)
+                return key + " " + Format(v, m) + ".";
+            string factor = "";
+            if (d.Delta > 0f && Mathf.Abs(d.Delta - pay.Delta) < 0.01f)
+                factor = ", " + Lex.T("vitals.factor-crew");
+            else
+                LogOnce("[Vitals] cycle " + key + " delta " + d.Delta
+                    + " vs crew payout " + pay.Delta + " — unattributed (capture)");
+            return key + " " + Lex.T(d.Delta > 0f ? "vitals.up" : "vitals.down")
+                + " " + Mathf.Abs(d.Delta).ToString("0.#") + factor
+                + ", " + Lex.T("outcome.now") + " " + Format(v, m) + ".";
         }
 
         private static string NameOf(Channel ch, PlayMakerFSM fsm)
@@ -586,6 +741,110 @@ namespace Sleeptalker.Sleeper2
             var parts = new string[faces.Count];
             for (int i = 0; i < faces.Count; i++) parts[i] = faces[i].ToString();
             return Lex.T("vitals.damaging") + " " + string.Join(", ", parts) + ".";
+        }
+
+        /// <summary>The contract stress cap, read from the bar's OWN math
+        /// (decode 2026-08-03: the Get Stress state clamps to a per-contract
+        /// constant and fills at value/constant — Derelict 12, Drone 4).
+        /// FloatClamp's maxValue is the authority, FloatDivide's divideBy the
+        /// fallback; neither found logs once and speaks the bare value.</summary>
+        private static readonly Dictionary<PlayMakerFSM, float> _contractCaps
+            = new Dictionary<PlayMakerFSM, float>();
+
+        internal static float ContractCap(PlayMakerFSM fsm)
+        {
+            if (_contractCaps.TryGetValue(fsm, out float cached)) return cached;
+            float cap = 0f;
+            var states = fsm.Fsm != null ? fsm.Fsm.States : null;
+            if (states != null)
+                foreach (var state in states)
+                {
+                    if (state.Name != "Get Stress") continue;
+                    foreach (var action in state.Actions)
+                    {
+                        if (action == null) continue;
+                        string type = action.GetType().Name;
+                        string field = type == "FloatClamp" ? "maxValue"
+                            : type == "FloatDivide" ? "divideBy" : null;
+                        if (field == null) continue;
+                        var f = action.GetType().GetField(field);
+                        var v = f != null
+                            ? f.GetValue(action) as HutongGames.PlayMaker.FsmFloat
+                            : null;
+                        if (v != null && v.Value > 0f) { cap = v.Value; break; }
+                    }
+                    break;
+                }
+            if (cap <= 0f)
+                LogOnce("[Vitals] contract stress cap not found on "
+                    + fsm.gameObject.name + " — bare value spoken");
+            _contractCaps[fsm] = cap;
+            return cap;
+        }
+
+        /// <summary>Future crisis points along the contract stress track
+        /// (owner design 2026-08-03: "x of y, then crises at a, b, c",
+        /// spawned ones excluded). The spawn criteria live on the crisis
+        /// locations' OWN dials — "Crisis Location?" true, a Trigger On
+        /// variable naming this contract's stress key, its Lower Limit the
+        /// threshold (the game's x.9 gate: Fuel Leak spawns at >= 8.9,
+        /// spoken 9). "&lt;Identifier&gt;_Crisis_Added" >= 1 in the store =
+        /// already spawned. Null with no live bar, no key, or nothing
+        /// ahead.</summary>
+        private static string CrisisForecast()
+        {
+            var bar = _contractChannel != null ? FirstLive(_contractChannel) : null;
+            if (bar == null) return null;
+            var keyVar = bar.FsmVariables.FindFsmString("Contract Stress Variable");
+            string stressKey = keyVar != null ? keyVar.Value : null;
+            if (string.IsNullOrEmpty(stressKey)) return null;
+
+            var points = new List<int>();
+            foreach (var container in StationAtlas.NodeContainers())
+            {
+                if (container == null) continue;
+                foreach (Transform node in container)
+                {
+                    foreach (var fsm in node.GetComponents<PlayMakerFSM>())
+                    {
+                        var isCrisis = fsm.FsmVariables.FindFsmBool("Crisis Location?");
+                        if (isCrisis == null || !isCrisis.Value) continue;
+                        float threshold = CrisisThreshold(fsm, stressKey);
+                        if (threshold <= 0f) continue;
+                        var id = fsm.FsmVariables.FindFsmString("Location Identifier");
+                        if (id != null && !string.IsNullOrEmpty(id.Value)
+                            && (LuaStore.NumF(id.Value + "_Crisis_Added") ?? 0f) >= 1f)
+                            continue;
+                        int point = Mathf.CeilToInt(threshold);
+                        if (!points.Contains(point)) points.Add(point);
+                    }
+                }
+            }
+            if (points.Count == 0) return null;
+            points.Sort();
+            var parts = new string[points.Count];
+            for (int i = 0; i < parts.Length; i++) parts[i] = points[i].ToString();
+            return Lex.T("vitals.crises") + " " + string.Join(", ", parts) + ".";
+        }
+
+        /// <summary>The dial's spawn threshold against THIS contract's stress
+        /// key — either Trigger On slot may carry it; 0 = not stress-keyed
+        /// (a crisis gated on some other variable stays unlisted).</summary>
+        private static float CrisisThreshold(PlayMakerFSM fsm, string stressKey)
+        {
+            var v1 = fsm.FsmVariables.FindFsmString("Trigger On Variable");
+            if (v1 != null && v1.Value == stressKey)
+            {
+                var l = fsm.FsmVariables.FindFsmFloat("Trigger On Lower Limit");
+                if (l != null) return l.Value;
+            }
+            var v2 = fsm.FsmVariables.FindFsmString("Trigger On 2 Variable");
+            if (v2 != null && v2.Value == stressKey)
+            {
+                var l = fsm.FsmVariables.FindFsmFloat("Trigger On 2 Lower Limit");
+                if (l != null) return l.Value;
+            }
+            return 0f;
         }
 
         internal static float CrewMax(PlayMakerFSM fsm)

@@ -45,6 +45,15 @@ namespace Sleeptalker.Sleeper2
             "Variables Met", "Off Camera", "Selected", "Cycle Check",
             "Clock Flasher", "Flashed Already?",
         };
+        // Ruled ABSENT poles of the dial (owner ruling 2026-08-03): the
+        // Off-family states exclude SILENTLY — they are known absence, not
+        // vocabulary gaps ("Off"/"Off 2" verified on the same location FSM in
+        // the corpus, the duplicate-state wart class; "Off + Destroy" the
+        // contract variant). Genuinely unknown states keep logging loudly.
+        private static readonly HashSet<string> Absent = new HashSet<string>
+        {
+            "Off", "Off 2", "Off + Destroy",
+        };
         private static readonly HashSet<string> LoggedStates = new HashSet<string>();
 
         private static readonly List<Transform> Containers = new List<Transform>();
@@ -83,6 +92,12 @@ namespace Sleeptalker.Sleeper2
             _containersFresh = true;
             return Containers;
         }
+
+        /// <summary>The discovered node containers, state-blind (crisis
+        /// forecast consumer 2026-08-03: unspawned crisis dials rest Off and
+        /// never surface as Build() nodes — their criteria are read straight
+        /// off the container children).</summary>
+        internal static List<Transform> NodeContainers() => FindContainers();
 
         private static float _lastSelfHeal = -10f;
 
@@ -178,6 +193,29 @@ namespace Sleeptalker.Sleeper2
             var nodes = new List<Node>();
             if (plane == null) return nodes;
             CollectNodes(plane, nodes, 0, true);
+            // Variant collapse (owner bug 2026-08-03: the story-route copies
+            // all draw, stacked exactly on the plain marker — the screen
+            // shows ONE node, the table listed three). One drawn position =
+            // one row, and the SURVIVOR is the topmost sibling — the native
+            // mouse raycast winner. Decode D21: the copies differ ONLY by
+            // their button's Transition Scene Name (which travel cutscene
+            // plays, once, then self-marks complete); the plain marker's is
+            // 'none', so collapsing to the plain copy would SKIP unseen
+            // story transitions. Topmost mirrors native play exactly.
+            for (int i = nodes.Count - 1; i >= 0; i--)
+            {
+                for (int j = 0; j < i; j++)
+                {
+                    if (nodes[j].Name != nodes[i].Name) continue;
+                    if ((nodes[j].Root.position - nodes[i].Root.position)
+                        .sqrMagnitude > 1f) continue;
+                    if (nodes[i].Root.GetSiblingIndex()
+                        > nodes[j].Root.GetSiblingIndex())
+                        nodes[j] = nodes[i];
+                    nodes.RemoveAt(i);
+                    break;
+                }
+            }
             return nodes;
         }
 
@@ -203,12 +241,18 @@ namespace Sleeptalker.Sleeper2
             string state = fsm != null ? fsm.ActiveStateName : null;
             var billboard = root.Find("Location Contents/Billboard Elements");
             if (billboard == null) return null; // not a location node
+            // Map markers hide by their own CanvasGroup alpha while staying
+            // GameObject-active (the root dial's Off/Off 2 set alpha 0 —
+            // decode D21); object presence is never screen presence. The
+            // drawn-variant capture log is retired: D21 proved TRN copies
+            // render nothing distinct (they differ only in travel routing).
+            if (map && !Util.RenderedUp(root)) return null;
             // Occupied is map-only vocabulary (D8): the current location's marker —
             // included as a non-actionable you-are-here row, never on the station.
             bool occupied = map && state == "Occupied";
             if (state == null || (!Listed.Contains(state) && !occupied))
             {
-                if (state != null && LoggedStates.Add(state))
+                if (state != null && !Absent.Contains(state) && LoggedStates.Add(state))
                     Plugin.Log.LogWarning("[Atlas] UNLISTED DIAL STATE (excluded): \""
                         + state + "\" on " + root.name);
                 return null;
