@@ -109,7 +109,20 @@ namespace Sleeptalker.Sleeper2
                     _pendingRetries = 0;
                     string d = DescribeFocused(go);
                     if (!string.IsNullOrEmpty(d) && !IdenticalRepeat(go, d))
-                        SpeechService.Say(d, Priority.Queued, "focus");
+                    {
+                        // A census change held while the player was away
+                        // composes AHEAD of the returning node read (owner
+                        // ruling 2026-08-04) — one utterance, callout first.
+                        // The composed line rides the DURABLE census source
+                        // (delta-pass HIGH: on the volatile focus source a
+                        // modal claim or a focus flush could destroy the
+                        // callout after the census forgot it).
+                        string census = StationCensus.ComposePrefix();
+                        if (census != null)
+                            SpeechService.Say(census + " " + d, Priority.Queued, "census");
+                        else
+                            SpeechService.Say(d, Priority.Queued, "focus");
+                    }
                 }
                 else if (go != null)
                 {
@@ -231,7 +244,14 @@ namespace Sleeptalker.Sleeper2
             if (string.IsNullOrEmpty(description)) return;
             if (IdenticalRepeat(selected, description)) return;
 
-            SpeechService.Say(description, Priority.Immediate, "focus");
+            // Same composition seam as the settle path, same durable-source
+            // routing for the composed form.
+            string censusPrefix = StationCensus.ComposePrefix();
+            if (censusPrefix != null)
+                SpeechService.Say(censusPrefix + " " + description,
+                    Priority.Immediate, "census");
+            else
+                SpeechService.Say(description, Priority.Immediate, "focus");
         }
 
         /// <summary>Focus description with the crew-selection enhancement

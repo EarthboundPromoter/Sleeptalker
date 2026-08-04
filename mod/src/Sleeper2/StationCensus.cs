@@ -6,22 +6,29 @@ using Sleeptalker.Middleware;
 
 namespace Sleeptalker.Sleeper2
 {
-    /// <summary>The station census — the CS1 port (P2; CS1 StationCensus.cs is
-    /// the design of record, ported 2026-08-03 on owner direction): spoken
-    /// appearance/disappearance callouts for location markers — the sighted
-    /// player's "a new marker faded in", anywhere the zone atlas serves (hub,
-    /// rig, contract floors). LOCATIONS ONLY: the CS1 character construction
-    /// (Character Button / Click to Play canvases) does not exist in CS2 —
-    /// verified against the census corpus before build (zero hits), owner
-    /// request of record.
+    /// <summary>The station census (P2; CS1 StationCensus.cs was the design
+    /// of record — flush schedule REWORKED 2026-08-04, owner ruling,
+    /// superseding the CS1 beat-tail port): spoken appearance/disappearance
+    /// callouts for location markers, anywhere the zone atlas serves (hub,
+    /// rig, contract floors — near-interchangeable surfaces for census
+    /// purposes). The proper map (Map Screen) carries no census coverage.
+    /// LOCATIONS ONLY: the CS1 character construction (Character Button /
+    /// Click to Play canvases) does not exist in CS2 — verified against the
+    /// census corpus before build (zero hits), owner request of record.
     ///
     /// Identity is the zone atlas key set (marker dial states, camera-
     /// independent — the CS1 trap: frustum churn must never read as change).
-    /// Two channels, owner-ruled (CS1):
-    /// - Cause-driven notifications, PRESENT tense, attached to the TAIL of
-    ///   the causing beat (outcome read, cycle summary, conversation end)
-    ///   via OnBeat — behind the beat's own queued speech, never over it,
-    ///   never on dead air, never on a keypress.
+    /// Two channels:
+    /// - Change callouts, PRESENT tense, EVENT-ANCHORED (owner ruling
+    ///   2026-08-04, second pass — no schedule timers): a change landing
+    ///   while the player is in control on the zone surface speaks at its
+    ///   own settle (the post-churn diff); a change held while the player
+    ///   was away (action view, dialogue, map, pause — the CS2 dials flip
+    ///   ~10s+ after their causing beat, the 0.8.0 evening-log diagnosis)
+    ///   COMPOSES ahead of the first node read after surface re-entry
+    ///   ("X has appeared. NODE. ..."), with a loud standalone backstop if
+    ///   no node read comes. Uniform boundary: nothing flushes inside a
+    ///   location node's action view.
     /// - N replays the last recorded change, PAST tense, unconditionally.
     ///   No freshness state: tense IS the freshness marker.</summary>
     internal static class StationCensus
@@ -48,9 +55,16 @@ namespace Sleeptalker.Sleeper2
         private static readonly List<Change> Last = new List<Change>();
 
         private static float _diffDueAt = -1f;
-        private static float _beatWindowUntil = -1f;
-        private static float _flushNotBefore;
         private static float _pendingSince = -1f;
+        private static float _onSurfaceSince = -1f;
+        private static float _talkEndedAt = -1f;
+        // Away epoch (delta-pass fix: rest-gate delays made a timestamp
+        // classifier lie): a signal that fires off the zone surface marks
+        // its eventual diff as away-born; pending also upgrades to away on
+        // the surface-exit edge. Away pendings compose; present pendings
+        // speak at settle.
+        private static bool _dueAway;
+        private static bool _pendingAway;
         private static bool _staleLogged;
         private static float _nextBaselineTry;
 
@@ -61,7 +75,7 @@ namespace Sleeptalker.Sleeper2
             // side. Filter = the marker anatomy (a Location Contents child),
             // never instance names (universal-hooks law). The game's own
             // new-location flash lives on the same dial family ("Clock
-            // Flasher"/"Flashed Already?"), so the arrival sound moment IS a
+            // Flasher"/"Flashed Already?"), so the arrival moment IS a
             // subscribed signal.
             // CRISIS!/CRISIS OVER! are the dial's one-shot crisis add/remove
             // beats (D-decode 2026-08-03: never resting states — the appear
@@ -72,8 +86,12 @@ namespace Sleeptalker.Sleeper2
                   "Clock Flasher", "Flashed Already?", "Off", "Off 2",
                   "Off + Destroy", "CRISIS!", "CRISIS OVER!" })
                 FsmSignals.Subscribe(null, state, OnMarkerSignal);
-            // A conversation's tail is a beat (story flags land at end).
-            ConversationEvents.ConversationEnded += OnBeat;
+            // Timestamp only (sync-pass finding, 2026-08-04): chained
+            // conversations reopen within frames of ending — a grace past
+            // the last end keeps a matured callout from firing into the gap,
+            // where the next dialogue's queue-kill could destroy it unspoken.
+            ConversationEvents.ConversationEnded +=
+                () => _talkEndedAt = Time.unscaledTime;
         }
 
         private static void OnMarkerSignal(PlayMakerFSM fsm, string state)
@@ -83,31 +101,28 @@ namespace Sleeptalker.Sleeper2
             // Coalesce bursts (a zone settle flips several markers): the diff
             // runs once, a beat after the churn quiets.
             _diffDueAt = Time.unscaledTime + Timing.CensusCoalesceDefer;
+            if (!OnFlushSurface()) _dueAway = true;
         }
 
         /// <summary>Scene load: re-baseline silently — cross-load diffs are
-        /// unknowable (CS1 law).</summary>
+        /// unknowable (CS1 law). Changes still pending at the load are lost
+        /// with it; log the drop so the class stays observable.</summary>
         public static void OnSceneChanged()
         {
+            if (Pending.Count > 0)
+                Plugin.Log.LogInfo("[Census] " + Pending.Count
+                    + " pending change(s) dropped at scene load (cross-load diffs unknowable).");
             KnownBySurface.Clear();
             _candidate = null;
             _candidateSurface = null;
             Pending.Clear();
             Last.Clear();
             _diffDueAt = -1f;
-            _beatWindowUntil = -1f;
             _pendingSince = -1f;
-        }
-
-        /// <summary>A story beat's tail: outcome read composed, cycle summary
-        /// spoken, conversation ended. Diff now and open the flush window —
-        /// the window absorbs the dials' own poll latency (the beat writes
-        /// the flag; the marker flips a beat later).</summary>
-        public static void OnBeat()
-        {
-            _beatWindowUntil = Time.unscaledTime + Timing.CensusBeatWindow;
-            _flushNotBefore = Time.unscaledTime + Timing.CensusFlushLeadIn;
-            Diff();
+            _onSurfaceSince = -1f;
+            _dueAway = false;
+            _pendingAway = false;
+            _staleLogged = false;
         }
 
         /// <summary>The active surface — same dial Build() filters by, so a
@@ -123,22 +138,60 @@ namespace Sleeptalker.Sleeper2
             // reads are not story truth). The due-stamp holds until rest.
             if (_diffDueAt > 0f && Time.unscaledTime >= _diffDueAt && WorldAtRest())
             {
-                _diffDueAt = -1f;
-                Diff();
+                // The stamp is consumed only once a snapshot was actually
+                // taken (sync-pass HIGH, 2026-08-04): with the zone surface
+                // hidden (map/overlay open) Build() sees nothing and the
+                // change would vanish from the scheduler — re-arm and retry
+                // until the surface draws again.
+                if (Diff()) _diffDueAt = -1f;
+                else _diffDueAt = Time.unscaledTime + Timing.CensusCoalesceDefer;
             }
-            if (Pending.Count > 0 && Time.unscaledTime < _beatWindowUntil
-                && Time.unscaledTime >= _flushNotBefore)
-                TryFlush();
-            // Pause rescue (CS1 A6): unflushed changes would be lost to the
-            // next baseline — the pause menu is modally quiet and at rest.
-            if (Pending.Count > 0 && ModeModel.Current() == Mode.Pause)
-                EmitPending();
+            // Surface-entry edge (event anchor, owner ruling second pass):
+            // the mode transition INTO Station/RigRooms is the demarcation
+            // for changes held while the player was away.
+            bool onSurface = OnFlushSurface();
+            if (onSurface && _onSurfaceSince < 0f)
+                _onSurfaceSince = Time.unscaledTime;
+            else if (!onSurface)
+            {
+                _onSurfaceSince = -1f;
+                // Exit edge: anything still unspoken becomes news-from-away —
+                // it composes with the returning node read.
+                if (Pending.Count > 0) _pendingAway = true;
+            }
+
+            if (Pending.Count > 0 && _diffDueAt < 0f && onSurface
+                && WorldAtRest() && !TutorialReader.PopupInFlight)
+            {
+                float now = Time.unscaledTime;
+                if (!HeldFromAway())
+                {
+                    // The change landed while the player was present and in
+                    // control: its own settle (the post-churn diff) is the
+                    // event — speak now. The entry-settle guard keeps mode
+                    // flickers from counting as presence.
+                    if (now - _onSurfaceSince >= Timing.StationSurfaceSettle)
+                        EmitPending();
+                }
+                else if (now >= _onSurfaceSince + Timing.StationSurfaceSettle
+                                     + Timing.CensusComposeBackstop)
+                {
+                    // Held-from-away changes normally compose ahead of the
+                    // first node read (ComposePrefix, pulled by the zone
+                    // table and FocusPatch). No node read came — speak
+                    // standalone, loudly.
+                    Plugin.Log.LogWarning("[Census] no node read to compose"
+                        + " with — spoken standalone (backstop)");
+                    EmitPending();
+                }
+            }
             if (Pending.Count > 0 && _pendingSince > 0f && !_staleLogged
                 && Time.unscaledTime - _pendingSince > Timing.CensusStaleLogAfter)
             {
                 _staleLogged = true;
-                Plugin.Log.LogInfo("[Census] change unflushed for 30s (no beat) — "
-                    + "carried by the next beat or N. Recurring = a beat lacks its OnBeat hook.");
+                Plugin.Log.LogInfo("[Census] change held for 30s (player off the "
+                    + "zone surface) — flushes on surface return, or N. Expected "
+                    + "during long action/dialogue stints.");
             }
         }
 
@@ -147,7 +200,9 @@ namespace Sleeptalker.Sleeper2
         /// parity with the tables.</summary>
         public static void SpeakLast()
         {
-            if (KnownBySurface.ContainsKey(Surface())) Diff();
+            // Freshness diff only at rest (sync-pass finding): a mid-flight
+            // N must not record churning dials as phantom changes.
+            if (KnownBySurface.ContainsKey(Surface()) && WorldAtRest()) Diff();
             if (Last.Count == 0)
             {
                 SpeechService.Say(Lex.T("census.none"), Priority.Immediate, "census");
@@ -157,6 +212,12 @@ namespace Sleeptalker.Sleeper2
             for (int i = 0; i < Last.Count; i++)
                 sb.Append(Past(Last[i])).Append(i < Last.Count - 1 ? ", " : ".");
             SpeechService.Say(sb.ToString(), Priority.Immediate, "census");
+            // A replayed change is heard (sync-pass finding): drop it from
+            // the pending flush so the scheduler doesn't re-speak it in
+            // present tense moments later. Older unreplayed pendings stand.
+            foreach (var c in Last)
+                Pending.RemoveAll(p => p.Key == c.Key && p.Appeared == c.Appeared);
+            if (Pending.Count == 0) ClearPending();
         }
 
         // ---------- Internals ----------
@@ -193,11 +254,24 @@ namespace Sleeptalker.Sleeper2
             _candidateSurface = surface;
         }
 
+        /// <summary>Where the census may OBSERVE (baseline/diff): any mode
+        /// the atlas serves under, action view included — dials flip mid-
+        /// action and the diff must capture them when they land.</summary>
         private static bool OnStationSurface()
         {
             var mode = ModeModel.Current();
             return mode == Mode.Station || mode == Mode.RigRooms
                 || mode == Mode.ActionView;
+        }
+
+        /// <summary>Where the census may SPEAK (owner ruling 2026-08-04):
+        /// actively on the hub/rig/contract zone surface — NOT inside a
+        /// location node's action view (uniformity), not on the map, not
+        /// under pause/dialogue/transition (those fail this or WorldAtRest).</summary>
+        private static bool OnFlushSurface()
+        {
+            var mode = ModeModel.Current();
+            return mode == Mode.Station || mode == Mode.RigRooms;
         }
 
         private static bool SameKeys(Dictionary<string, string> a, Dictionary<string, string> b)
@@ -211,6 +285,10 @@ namespace Sleeptalker.Sleeper2
         private static bool WorldAtRest()
         {
             if (ConversationEvents.ConversationActive) return false;
+            // Post-conversation grace (sync-pass finding): chained dialogues
+            // reopen within frames — the gap is not rest.
+            if (_talkEndedAt > 0f && Time.unscaledTime
+                < _talkEndedAt + Timing.CensusPostTalkGrace) return false;
             if (CycleGate.TransitionInFlight) return false;
             var mode = ModeModel.Current();
             return mode != Mode.CycleTransition && mode != Mode.Travel;
@@ -236,14 +314,19 @@ namespace Sleeptalker.Sleeper2
             return snap.Count > 0 ? snap : null;
         }
 
-        private static void Diff()
+        /// <summary>Returns true when a snapshot was actually taken (the
+        /// caller may consume its due-stamp); false = surface not readable
+        /// right now, try again.</summary>
+        private static bool Diff()
         {
             // Diff strictly within the active surface's own set — an
             // un-baselined surface diffs nothing (its baseline path runs).
             string surface = Surface();
-            if (!KnownBySurface.TryGetValue(surface, out var known)) return;
+            if (!KnownBySurface.TryGetValue(surface, out var known)) return false;
             var fresh = Snapshot();
-            if (fresh == null) return;
+            if (fresh == null) return false;
+            bool wasAway = _dueAway;
+            _dueAway = false;
 
             List<Change> changes = null;
             foreach (var kv in fresh)
@@ -255,7 +338,7 @@ namespace Sleeptalker.Sleeper2
                     (changes = changes ?? new List<Change>()).Add(
                         new Change { Key = kv.Key, Name = kv.Value, Appeared = false });
             KnownBySurface[surface] = fresh;
-            if (changes == null) return;
+            if (changes == null) return true;
 
             // Fold into the pending batch; an oscillation (appeared then gone
             // before any flush) cancels to nothing rather than speaking a
@@ -267,6 +350,8 @@ namespace Sleeptalker.Sleeper2
                 if (opposite >= 0) Pending.RemoveAt(opposite);
                 else Pending.Add(c);
             }
+            if (Pending.Count > 0) _pendingAway = _pendingAway || wasAway;
+            else _pendingAway = false;
             _pendingSince = Pending.Count > 0
                 ? (_pendingSince > 0f ? _pendingSince : Time.unscaledTime) : -1f;
             _staleLogged = _staleLogged && Pending.Count > 0;
@@ -277,6 +362,7 @@ namespace Sleeptalker.Sleeper2
             foreach (var c in changes)
                 log.Append(' ').Append(c.Appeared ? '+' : '-').Append(c.Key);
             Plugin.Log.LogInfo(log.ToString());
+            return true;
         }
 
         /// <summary>Above this many same-direction changes the flush batches
@@ -284,21 +370,54 @@ namespace Sleeptalker.Sleeper2
         /// name-by-name read at that scale is a wall; N carries detail).</summary>
         private const int BatchThreshold = 6;
 
-        private static void TryFlush()
+        /// <summary>True when the pending changes carry the away epoch —
+        /// their signals fired off the zone surface, or the player left
+        /// while they were unspoken. Those compose with the returning node
+        /// read; present-born changes speak at their own settle.</summary>
+        private static bool HeldFromAway() => _pendingAway;
+
+        /// <summary>Pulled by FocusPatch at both node-read sites: a change
+        /// held while the player was away composes AHEAD of the first node
+        /// read after surface re-entry (owner lean, 2026-08-04) — one
+        /// utterance, deterministic order. Returns null when there is
+        /// nothing to compose or the moment is wrong; consuming clears the
+        /// pending batch (N keeps the past-tense replay).
+        /// Crisis ordering (owner ruling 2026-08-03: both outputs read,
+        /// toast first) rides the PopupInFlight gate here and in Tick —
+        /// the callout carries until the toast is through, never over it.</summary>
+        public static string ComposePrefix()
         {
-            if (Pending.Count == 0) return;
-            if (!OnStationSurface()) return;
-            // Crisis ordering (owner ruling 2026-08-03: both outputs read,
-            // toast first): while the game's own popup toast has triggered
-            // but not yet drawn, the census tail stands down — once the
-            // toast enqueues, queue order keeps toast-then-census. If the
-            // beat window expires during the hold, the change carries to
-            // the next beat or N (never lost, never over the toast).
-            if (TutorialReader.PopupInFlight) return;
-            EmitPending();
+            if (!OnFlushSurface() || !WorldAtRest()) return null;
+            if (TutorialReader.PopupInFlight) return null;
+            // Catch-up diff (delta-pass fix: the map-close re-arm cycle can
+            // leave the due-stamp maturing when the first node read fires —
+            // the compose must not lose the race to its own coalesce; the
+            // read moment is itself a settle point, and oscillation folding
+            // still scrubs any half-flipped world).
+            if (_diffDueAt > 0f && Diff()) _diffDueAt = -1f;
+            if (Pending.Count == 0 || _diffDueAt > 0f) return null;
+            if (!HeldFromAway()) return null;
+            var text = PendingText();
+            ClearPending();
+            Plugin.Log.LogInfo("[Census] callout composed ahead of the node read");
+            return text;
         }
 
         private static void EmitPending()
+        {
+            SpeechService.Say(PendingText(), Priority.Queued, "census");
+            ClearPending();
+        }
+
+        private static void ClearPending()
+        {
+            Pending.Clear();
+            _pendingSince = -1f;
+            _pendingAway = false;
+            _staleLogged = false;
+        }
+
+        private static string PendingText()
         {
             var sb = new System.Text.StringBuilder();
             int appeared = 0, gone = 0;
@@ -313,10 +432,7 @@ namespace Sleeptalker.Sleeper2
                 if (!c.Appeared && gone > BatchThreshold) continue;
                 sb.Append(Present(c)).Append(' ');
             }
-            SpeechService.Say(sb.ToString().TrimEnd(), Priority.Queued, "census");
-            Pending.Clear();
-            _pendingSince = -1f;
-            _staleLogged = false;
+            return sb.ToString().TrimEnd();
         }
     }
 }

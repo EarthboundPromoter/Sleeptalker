@@ -376,9 +376,6 @@ namespace Sleeptalker.Sleeper2
             _clockSnapshot = null;
             if (sb.Length > 0)
                 SpeechService.Say(sb.ToString(), Priority.Queued, "outcome");
-            // An outcome's tail is a census beat (CS1): a location the
-            // outcome unlocked announces behind the read's own speech.
-            StationCensus.OnBeat();
         }
 
         /// <summary>Rendered effect lines, captured at the outcome signal: every

@@ -70,9 +70,6 @@ namespace Sleeptalker.Sleeper2
             _pendingController = null;
             _settledAt = Time.unscaledTime;
             Summarize(controller);
-            // Cycle turnover is a census beat (CS1): new locations arriving
-            // with the cycle announce behind the summary's own speech.
-            StationCensus.OnBeat();
         }
 
         private static void Summarize(PlayMakerFSM controller)

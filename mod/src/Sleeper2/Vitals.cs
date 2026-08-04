@@ -32,6 +32,7 @@ namespace Sleeptalker.Sleeper2
             public string OwnerPrefix;                 // owner GameObject name prefix ("" = any)
             public Func<PlayMakerFSM, bool> Match;     // extra predicate beyond the prefix (null = none)
             public string[] UpdateStates;              // the bar's change-clock state(s)
+            public string[] DiscoverStates;            // spawn-path states: seed presence + baseline, silently
             public Func<PlayMakerFSM, float> Value;    // current value, from the bar's own vars
             public Func<PlayMakerFSM, float> Max;      // capacity; 0 = unknown, spoken without "of"
             public Func<PlayMakerFSM, string> SpokenName; // per-instance name (crew); null = Name
@@ -66,6 +67,7 @@ namespace Sleeptalker.Sleeper2
                 Name = Lex.T("vitals.stress"),
                 OwnerPrefix = "Stress System ",
                 UpdateStates = new[] { "Animation and Sound" },
+                DiscoverStates = new[] { "Get Stress", "Set Bars" },
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = fsm => FirstNumberIn(fsm.gameObject.name),
                 // Owner build 2026-08-02 (guide-confirmed): the white markers
@@ -102,9 +104,17 @@ namespace Sleeptalker.Sleeper2
             // crew surfaces (Checkpoint C).
             Register(new Channel
             {
-                OwnerPrefix = "Crew ",
-                Match = fsm => fsm.gameObject.name.Contains("Stress"),
+                OwnerPrefix = "",
+                // Mechanism-keyed like the contract family (owner ruling
+                // 2026-08-04): the crew renderers carry the sibling key
+                // "Crew Stress Variable" (corpus: 6 owners, all renderers,
+                // no machinery) — the "Crew "-prefix + name qualifier is
+                // retired with the class ruling.
+                Match = fsm =>
+                    fsm.FsmVariables.FindFsmString("Crew Stress Variable") != null
+                    && fsm.FsmVariables.FindFsmFloat("Bar Fill") != null,
                 UpdateStates = new[] { "Animation and Sound", "Animation and Sound 2" },
+                DiscoverStates = new[] { "Get Stress", "Set Bars" },
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = CrewMax,
                 SpokenName = fsm => CrewSpokenName(fsm) + " " + Lex.T("vitals.stress"),
@@ -150,9 +160,19 @@ namespace Sleeptalker.Sleeper2
                 // GetFsmXxx AUTO-CREATES missing variables — a Get*-based
                 // existence check is always true, which made this matcher
                 // claim every stress bar incl. the player's).
-                Match = fsm => fsm.gameObject.name.Contains("Stress")
-                    && fsm.FsmVariables.FindFsmString("Contract Stress Variable") != null,
+                // Mechanism-keyed WHOLE (owner ruling 2026-08-04: capture UI
+                // classes, never names — corpus sweep of record: exactly 42
+                // carriers of the key exist, ALL renderers of one anatomy,
+                // zero machinery; the old name.Contains("Stress") qualifier
+                // matched 84 objects, half outside the class. Bar Fill is
+                // the belt-and-braces renderer guard — all 42 carry it).
+                // Find* = exact variable name; Contains would claim the
+                // Cycle Controller's "Contract Stress" float.
+                Match = fsm =>
+                    fsm.FsmVariables.FindFsmString("Contract Stress Variable") != null
+                    && fsm.FsmVariables.FindFsmFloat("Bar Fill") != null,
                 UpdateStates = new[] { "Animation and Sound" },
+                DiscoverStates = new[] { "Get Stress", "Set Bars" },
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = ContractCap,
                 // Owner ruling 2026-08-02: the bar's own rendered TITLE names
@@ -266,6 +286,72 @@ namespace Sleeptalker.Sleeper2
             Channels.Add(ch);
             foreach (var state in ch.UpdateStates)
                 FsmSignals.Subscribe(null, state, (fsm, s) => OnChanged(ch, fsm));
+            if (ch.DiscoverStates != null)
+                foreach (var state in ch.DiscoverStates)
+                    FsmSignals.Subscribe(null, state, (fsm, s) => OnDiscovered(ch, fsm));
+        }
+
+        // Presence seeding (owner build 2026-08-04 — the CONWAY ALERT gap):
+        // subscription-only discovery left a mid-session bar invisible when
+        // its spawn path routed around the change clock (the stress family's
+        // INIT → Get Stress → Set Bars build never touches Animation and
+        // Sound), and a bar discovered BY its first change swallowed that
+        // change as load-time catch-up (the first-crew-stress class, same
+        // mechanism). Spawn-path states seed the bar into the live set with
+        // its current value, silently: the readout lists it immediately and
+        // the FIRST real change speaks against the seeded baseline.
+        private struct SeedRetry
+        {
+            public Channel Ch;
+            public PlayMakerFSM Fsm;
+            public float Until;
+        }
+        private static readonly List<SeedRetry> _seedRetries = new List<SeedRetry>();
+
+        private static void OnDiscovered(Channel ch, PlayMakerFSM fsm)
+        {
+            if (fsm == null || !fsm.gameObject.name.StartsWith(ch.OwnerPrefix)) return;
+            if (ch.Match != null && !ch.Match(fsm)) return;
+            TrySeed(ch, fsm, allowGeneric: false);
+        }
+
+        private static void TrySeed(Channel ch, PlayMakerFSM fsm, bool allowGeneric)
+        {
+            string key = NameOf(ch, fsm);
+            // A contract bar seeded before its title renders would key
+            // generic and split the name cache — hold and retry until the
+            // title draws (bounded; generic accepted at the deadline).
+            if (!allowGeneric && ch == _contractChannel
+                && key == Lex.T("vitals.contract-stress"))
+            {
+                for (int i = 0; i < _seedRetries.Count; i++)
+                    if (_seedRetries[i].Fsm == fsm) return;
+                _seedRetries.Add(new SeedRetry
+                    { Ch = ch, Fsm = fsm, Until = Time.unscaledTime + 5f });
+                return;
+            }
+            ch.LiveByName[key] = fsm;
+            if (ch.LastByName.ContainsKey(key)) return;
+            ch.LastByName[key] = Bounded(ch, fsm, key, out float _);
+            Plugin.Log.LogInfo("[Vitals] seeded at spawn: " + key + " = "
+                + ch.LastByName[key].ToString("0.#")
+                + " (presence discovery, silent)");
+        }
+
+        private static void SeedRetryTick()
+        {
+            for (int i = _seedRetries.Count - 1; i >= 0; i--)
+            {
+                var r = _seedRetries[i];
+                if (r.Fsm == null) { _seedRetries.RemoveAt(i); continue; }
+                string key = NameOf(r.Ch, r.Fsm);
+                bool generic = key == Lex.T("vitals.contract-stress");
+                if (!generic || Time.unscaledTime >= r.Until)
+                {
+                    _seedRetries.RemoveAt(i);
+                    TrySeed(r.Ch, r.Fsm, allowGeneric: true);
+                }
+            }
         }
 
         /// <summary>The value a bar's element may SPEAK: floored at zero and
@@ -396,6 +482,7 @@ namespace Sleeptalker.Sleeper2
         public static void Tick()
         {
             PayoutTick();
+            SeedRetryTick();
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var p = _pending[i];

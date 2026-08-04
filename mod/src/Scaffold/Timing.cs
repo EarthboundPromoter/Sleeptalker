@@ -66,8 +66,8 @@ namespace Sleeptalker.Scaffold
 
         // ---------- Census ----------
         public const float CensusCoalesceDefer = 0.5f;  // burst of canvas flips diffs once after the churn quiets
-        public const float CensusBeatWindow = 3f;
-        public const float CensusFlushLeadIn = 1.5f;    // canvases' return-to-listed may cancel a phantom first
+        public const float CensusPostTalkGrace = 2f;    // chained dialogues reopen within frames — the gap is not rest
+        public const float CensusComposeBackstop = 2f;  // held callout with no node read to ride — speak standalone, loudly
         public const float CensusStaleLogAfter = 30f;
 
         // ---------- Log throttles ----------

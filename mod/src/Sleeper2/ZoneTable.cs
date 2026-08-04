@@ -90,7 +90,11 @@ namespace Sleeptalker.Sleeper2
             Rows = () => Nodes().Count + Ops().Count,
             Cols = row => row < Nodes().Count
                 ? ColumnsFor(Nodes()[row]).Count : 1,
-            RowSpeech = (r, c) => RowArriveSpeech(r, c),
+            // The zone row read is the PRIMARY node read on this surface —
+            // a census callout held from away composes ahead of it (owner
+            // ruling 2026-08-04; delta-pass HIGH: without this seam the
+            // backstop order-inversion would have been the normal path).
+            RowSpeech = (r, c) => WithCensusPrefix(RowArriveSpeech(r, c)),
             CellSpeech = (r, c) => CellRead(r, c),
             // Rig side is a stacked grid (owner design 2026-07-31): Rooms over
             // Ship operations (End Cycle + crew assignment — the RIG display's
@@ -103,6 +107,13 @@ namespace Sleeptalker.Sleeper2
             EmptyCommit = () => Lex.T("zone.empty"),
             Source = "zone",
         };
+
+        private static string WithCensusPrefix(string row)
+        {
+            if (string.IsNullOrEmpty(row)) return row;
+            var callout = StationCensus.ComposePrefix();
+            return callout == null ? row : callout + " " + row;
+        }
 
         public static void Init()
         {
@@ -126,7 +137,11 @@ namespace Sleeptalker.Sleeper2
                 // its Clicker child, the event surface) exactly as the game's
                 // own pointer machinery would; the previous node is un-hovered
                 // first. The focus echo stays suppressed; the table spoke.
-                // Facet reads run after this hover, so the billboard is rendered.
+                // Facet reads run after this hover, so the billboard is
+                // rendered — the load-bearing invariant (sync HIGH-3: the
+                // hover-when-aligned variant broke reads on exactly the
+                // sticky rows; the nameplate question is an OPEN owner
+                // ruling, see checklist M12).
                 _driveEchoUntil = Time.unscaledTime + 1.5f;
                 HoverNode(_hovered, true);
                 HoverNode(button, false);
@@ -164,6 +179,29 @@ namespace Sleeptalker.Sleeper2
                 if (row < 0) return;
                 var button = nodes[row].Button;
                 if (button == null) return;
+                // COMMIT GATE (owner build 2026-08-04, REBUILT same day on
+                // the owner's correction — "selection is not in doubt").
+                // The first build gated on the proximity selector's own
+                // "Closest UI Button" agreeing with our row. That was wrong
+                // twice: (1) the variable is the selector's WORKING value
+                // and the selector rests in Idle (event-driven, not
+                // per-frame), so it is stale by construction — live capture
+                // of record: it read Gaia's Gyre while the player was on
+                // SPINDLE TRADE HALL, refusing a perfectly good commit
+                // eight times; (2) the mod commits down the POINTER path
+                // (row hover raises MouseOn, then the click) — the game's
+                // own mouse channel, which never required the proximity
+                // selector to agree. The one genuine dead-press cause is
+                // the button refusing activation, which is a single
+                // unambiguous flag the game's own click path reads too.
+                // So: no selection opinion at all — ask the button.
+                if (!Interactable(button))
+                {
+                    Table.Say(Lex.T("zone.commit.unselectable"));
+                    Plugin.Log.LogWarning("[Zone] commit refused — button not"
+                        + " interactable at \"" + nodes[row].Name + "\" — capture");
+                    return;
+                }
                 _driveEchoUntil = Time.unscaledTime + 1.5f;
                 Navigator.Click(button);
             };
@@ -227,7 +265,24 @@ namespace Sleeptalker.Sleeper2
         private static bool _verifyOutOfBand;
         private static float _verifyValue;
         private static float _verifyAt = -1f;
+        private static float _verifyDeadline = -1f;
         private static readonly HashSet<string> _scatterLogged = new HashSet<string>();
+
+        /// <summary>Can this button be activated right now — the game's own
+        /// clickability truth (Selectable.IsInteractable folds in parent
+        /// CanvasGroups), the exact flag the game's click path reads and
+        /// the exact one the Solheim dead presses failed. No selection
+        /// proxy: selection is not in doubt (owner, 2026-08-04).</summary>
+        private static bool Interactable(GameObject button)
+        {
+            if (button == null) return false;
+            var sel = button.GetComponent<UnityEngine.UI.Selectable>();
+            return sel == null || sel.IsInteractable();
+        }
+
+        // (AlignmentTick retired 2026-08-04 with the selection-proxy gate:
+        // the commit is a synchronous question — the button either accepts
+        // activation or it does not — so there is nothing to await.)
 
         /// <summary>One wire write per actual row change (D17 recipe). The
         /// settle verify judges the WIRE, not the selector (ride V4
@@ -249,27 +304,41 @@ namespace Sleeptalker.Sleeper2
             _verifyTarget = node;
             _verifyOutOfBand = outOfBand;
             _verifyValue = written;
-            // SmoothDamp is 0.2 s; check well after it has converged.
-            _verifyAt = Time.unscaledTime + 0.8f;
+            // Polling judge (owner build 2026-08-04; the 0.8s single sample
+            // read the SmoothDamp tail as 40 false mismatches — deltas were
+            // pair-symmetric and distance-proportional, the damper still
+            // converging, worst on pans long enough to hit the velocity
+            // cap): poll from 0.3s, mismatch only if never converged by the
+            // deadline.
+            _verifyAt = Time.unscaledTime + 0.3f;
+            _verifyDeadline = Time.unscaledTime + 2.5f;
         }
 
         private static void VerifyTick()
         {
             if (_verifyTarget == null || Time.unscaledTime < _verifyAt) return;
-            var target = _verifyTarget;
-            _verifyTarget = null;
             var mode = ModeModel.Current();
-            if (mode != Mode.Station && mode != Mode.RigRooms) return;
+            if (mode != Mode.Station && mode != Mode.RigRooms)
+            {
+                _verifyTarget = null;
+                return;
+            }
             if (!GameQueries.WireSettled(_verifyValue, out float actual))
             {
-                // The real fail-loud seam: the damper did not land on our value
+                if (Time.unscaledTime < _verifyDeadline) return; // still gliding
+                var missed = _verifyTarget;
+                _verifyTarget = null;
+                // The real fail-loud seam: the damper never landed on our value
                 // (absorbed write, unexpected clamp, something fighting the wire).
                 Plugin.Log.LogWarning("[Zone] follow WIRE mismatch"
                     + (_verifyOutOfBand ? " (out-of-band, edge pan — class 2/3)" : "")
-                    + ": wrote " + _verifyValue.ToString("0.0") + ", damped settled at "
-                    + actual.ToString("0.0") + " for \"" + target.Name + "\" — capture");
+                    + ": wrote " + _verifyValue.ToString("0.0") + ", never converged ("
+                    + actual.ToString("0.0") + " at deadline) for \"" + missed.Name
+                    + "\" — capture");
                 return;
             }
+            var target = _verifyTarget;
+            _verifyTarget = null;
             var closest = StationAtlas.ClosestButton();
             if (closest == target.Button) return;
             // Wire landed; the selector holds a neighbor — lateral scatter,
