@@ -531,15 +531,32 @@ namespace Sleeptalker.Sleeper2
                 {
                     if (!Util.RenderedUp(tmp.transform)) continue;
                     string text = SpeechService.Clean(tmp.text);
-                    if (!string.IsNullOrEmpty(text)) return TranscodeVerdict(text);
+                    if (!string.IsNullOrEmpty(text))
+                        return TranscodeVerdict(text, t.name);
                 }
             }
             return null;
         }
 
-        private static string TranscodeVerdict(string text)
+        private static string TranscodeVerdict(string text, string container)
         {
             string upper = text.ToUpperInvariant();
+            // The glitch verdict is not a skill reading at all — it is the
+            // game's own warning, and its first word is "WARNING!", which the
+            // skill split below would speak as the skill name. Keyed on the
+            // CONTAINER ("Glitched Dice Slotted", D10 (d)) rather than on the
+            // rendered words: the object name is the game's own flag, and the
+            // wording differs from it anyway ("GLITCH", no -ed). Spoken as
+            // drawn, since it is already the game's own sentence. The capture
+            // signal survives for a WORDING change, which is the part that
+            // could quietly stop making sense.
+            if (container != null && container.StartsWith("Glitched"))
+            {
+                if (!upper.Contains("GLITCH"))
+                    LogOnceDice("[Dice] glitch verdict wording changed: \""
+                        + text + "\" — spoken as drawn (capture)");
+                return text;
+            }
             int space = text.IndexOf(' ');
             string skill = space > 0 ? text.Substring(0, space) : text;
             if (upper.Contains("MISSING") || upper.Contains("NOT FOUND"))

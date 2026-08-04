@@ -135,7 +135,10 @@ namespace Sleeptalker.Sleeper2
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text)) continue;
                 sb.Append(' ').Append(text);
-                if (!text.EndsWith(".")) sb.Append('.');
+                // A fragment that already ends a sentence keeps its own mark:
+                // appending unconditionally read a question as "?.".
+                char last = text[text.Length - 1];
+                if (last != '.' && last != '!' && last != '?') sb.Append('.');
             }
             return sb.ToString();
         }
@@ -148,7 +151,10 @@ namespace Sleeptalker.Sleeper2
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text)) continue;
                 sb.Append(' ').Append(text);
-                if (!text.EndsWith(".")) sb.Append('.');
+                // A fragment that already ends a sentence keeps its own mark:
+                // appending unconditionally read a question as "?.".
+                char last = text[text.Length - 1];
+                if (last != '.' && last != '!' && last != '?') sb.Append('.');
             }
         }
 

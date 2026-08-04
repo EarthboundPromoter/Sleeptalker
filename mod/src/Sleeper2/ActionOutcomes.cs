@@ -359,9 +359,11 @@ namespace Sleeptalker.Sleeper2
                         continue;
                     if (sb.Length > 0) sb.Append(' ');
                     sb.Append(delta);
-                    string now = Vitals.CurrentFor(bodyWord);
-                    if (now != null)
-                        sb.Append(", ").Append(Lex.T("outcome.now")).Append(' ').Append(now);
+                    // Movement only, no standing total (owner ruling 2026-08-04):
+                    // the chip names a bar in the card's vocabulary, which cannot
+                    // say WHICH instance moved, so any total appended here risked
+                    // being another bar's. The watched delta above carries the
+                    // total, read off the bar that actually moved.
                     sb.Append('.');
                 }
             }

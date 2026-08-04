@@ -330,12 +330,134 @@ namespace Sleeptalker.Sleeper2
                     { Ch = ch, Fsm = fsm, Until = Time.unscaledTime + 5f });
                 return;
             }
+            key = PreferRenderedKey(ch, key, fsm);
+            RetireAliases(ch, key, fsm);
             ch.LiveByName[key] = fsm;
             if (ch.LastByName.ContainsKey(key)) return;
             ch.LastByName[key] = Bounded(ch, fsm, key, out float _);
             Plugin.Log.LogInfo("[Vitals] seeded at spawn: " + key + " = "
                 + ch.LastByName[key].ToString("0.#")
                 + " (presence discovery, silent)");
+        }
+
+        /// <summary>Retire any key naming the SAME live element under an older
+        /// spoken name. A crew bar keys as "Crew 1 Stress" until its panel has
+        /// rendered a character name, then as "KIRK Stress" — and the summary
+        /// reads every key, so without this one bar spoke twice, once under a
+        /// label the game renders nowhere (ride 2026-08-04). The baseline
+        /// migrates with the key: dropping it would mute the first change after
+        /// a rename as load-time catch-up, and so do any in-flight verify and
+        /// cycle-window delta raised under the old name. Copies that share ONE
+        /// key are untouched — the key equality check short-circuits before any
+        /// identity test — so the contract channel's deliberate same-title
+        /// dedupe still stands. See SameElement for what counts as the same bar.</summary>
+        private static void RetireAliases(Channel ch, string key, PlayMakerFSM fsm)
+        {
+            List<string> stale = null;
+            foreach (var kv in ch.LiveByName)
+            {
+                if (kv.Key == key) continue;
+                if (!SameElement(ch, kv.Value, fsm)) continue;
+                (stale ?? (stale = new List<string>())).Add(kv.Key);
+            }
+            if (stale == null) return;
+            foreach (var old in stale)
+            {
+                if (ch.LastByName.TryGetValue(old, out float baseline))
+                {
+                    if (!ch.LastByName.ContainsKey(key))
+                        ch.LastByName[key] = baseline;
+                    else if (ch.LastByName[key] != baseline)
+                        // Rival baselines for one bar (copies can accumulate
+                        // separately before the shared stress key populates).
+                        // KEEP the surviving key's: retirement runs before the
+                        // diff, so re-baselining on the live value would make
+                        // the diff that follows compare a value against itself
+                        // and swallow the very change that triggered this. The
+                        // surviving key is the name about to be announced, so
+                        // its baseline is the one in force.
+                        LogOnce("[Vitals] " + key + " kept its baseline "
+                            + ch.LastByName[key].ToString("0.#") + " over \""
+                            + old + "\"'s " + baseline.ToString("0.#")
+                            + " at rename (capture)");
+                }
+                // A cycle-window delta filed under the old name is the same
+                // bar's movement. The wake summary walks LIVE keys, so leaving
+                // it behind drops the movement from the summary entirely. Two
+                // entries are NOT summed: the contract copies are concurrent
+                // mirrors of ONE store key, each raising a full delta for the
+                // same movement, so adding them would double it. Take the
+                // FRESHER observation whole — that also refuses to launder a
+                // stale delta past the 60s guard by inheriting a new stamp.
+                if (_cycleDeltas.TryGetValue(old, out var d))
+                {
+                    if (!_cycleDeltas.TryGetValue(key, out var mine))
+                        _cycleDeltas[key] = d;
+                    else if (d.At > mine.At) { mine.Delta = d.Delta; mine.At = d.At; }
+                    _cycleDeltas.Remove(old);
+                }
+                // An announce still maturing in the verify queue was raised
+                // against the old name; re-point it, or it finds no baseline
+                // when it fires and swallows a real change as a round-trip.
+                // The FSM deliberately does NOT travel with it: the queued copy
+                // is the one that observed the change, and re-pointing at a
+                // merely-seeded copy could read a value mid-burst and announce
+                // an intermediate — the misreport class this queue exists to
+                // prevent. If that copy goes inactive, SpeakVerified drops the
+                // announce and the next signal re-diffs, which is a silence.
+                foreach (var p in _pending)
+                    if (p.Ch == ch && p.Key == old) p.Key = key;
+                ch.LiveByName.Remove(old);
+                ch.LastByName.Remove(old);
+                Plugin.Log.LogInfo("[Vitals] retired stale element name \"" + old
+                    + "\" — the same bar now renders as \"" + key + "\"");
+            }
+        }
+
+        /// <summary>Same physical bar? Reference identity for every channel —
+        /// and Unity's overloaded == must NOT stand in for it, since two
+        /// DESTROYED FSMs compare equal to each other and would cross-retire
+        /// unrelated dead bars. The contract channel needs more: it can seed
+        /// generically from one COPY and later render its title from another
+        /// (same-titled copies are a decoded fact), so there the identity is
+        /// the stress key those copies share.</summary>
+        /// <summary>The key this element should be filed under: its freshly
+        /// computed name, UNLESS that name is the generic contract fallback and
+        /// this same bar is already filed under a rendered title. There is no
+        /// name cache on the contract channel (the crew channel has one), and
+        /// ContractStressName recomputes per signal — returning the generic
+        /// whenever no title happens to be drawn at that instant. Without this,
+        /// a copy whose chrome never draws would RETIRE the title another copy
+        /// established, and the 5s seed-retry deadline fires exactly that path
+        /// by design. Adopt the rendered name rather than overwrite it.</summary>
+        private static string PreferRenderedKey(Channel ch, string key, PlayMakerFSM fsm)
+        {
+            if (ch != _contractChannel || key != Lex.T("vitals.contract-stress"))
+                return key;
+            foreach (var kv in ch.LiveByName)
+            {
+                if (kv.Key == key) continue;
+                // Only adopt a name that is still on the board. An action-group
+                // copy deactivates when its group completes, and its title came
+                // from the group's own chrome — adopting that would speak the
+                // stress bar under a dead action's label, which is worse than
+                // the honest generic this guard is trying to avoid.
+                var other = kv.Value;
+                if (other == null || other.gameObject == null
+                    || !other.gameObject.activeInHierarchy) continue;
+                if (SameElement(ch, other, fsm)) return kv.Key;
+            }
+            return key;
+        }
+
+        private static bool SameElement(Channel ch, PlayMakerFSM a, PlayMakerFSM b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (ch != _contractChannel || a == null || b == null) return false;
+            var ka = a.FsmVariables.FindFsmString("Contract Stress Variable");
+            var kb = b.FsmVariables.FindFsmString("Contract Stress Variable");
+            return ka != null && kb != null
+                && !string.IsNullOrEmpty(ka.Value) && ka.Value == kb.Value;
         }
 
         private static void SeedRetryTick()
@@ -376,7 +498,8 @@ namespace Sleeptalker.Sleeper2
         {
             if (fsm == null || !fsm.gameObject.name.StartsWith(ch.OwnerPrefix)) return;
             if (ch.Match != null && !ch.Match(fsm)) return;
-            string key = NameOf(ch, fsm);
+            string key = PreferRenderedKey(ch, NameOf(ch, fsm), fsm);
+            RetireAliases(ch, key, fsm);
             ch.LiveByName[key] = fsm;
 
             float value = Bounded(ch, fsm, key, out float _);
@@ -508,7 +631,11 @@ namespace Sleeptalker.Sleeper2
             if (!ch.LastByName.TryGetValue(p.Key, out float last)
                 || value == last)
             {
-                ch.LastByName[p.Key] = value;  // round-tripped: silent
+                // Round-tripped: silent. But never RESURRECT a key retired
+                // mid-verify (the bar renamed while this announce matured) —
+                // the zombie baseline would outlive the rename and later diff
+                // against movement that has already been spoken.
+                if (ch.LiveByName.ContainsKey(p.Key)) ch.LastByName[p.Key] = value;
                 return;
             }
             if (HandOffIfLaneInFlight(ch, p.Key, fsm, value, last)) return;
@@ -530,34 +657,66 @@ namespace Sleeptalker.Sleeper2
             if (string.IsNullOrEmpty(renderedWord)) return null;
             string upper = renderedWord.ToUpperInvariant();
             string best = null;
+            int bestLen = 0;
+            // Generic channel names FIRST: they are the stable identities, and a
+            // tie must never fall to registration order (a contract bar titled
+            // "GLITCH" ties the Glitch channel's own name exactly).
             foreach (var ch in Channels)
             {
                 if (ch.Name == null) continue; // per-instance channels (crew) opt out
-                if (!upper.Contains(ch.Name.ToUpperInvariant())) continue;
-                if (best == null || ch.Name.Length > best.Length) best = ch.Name;
+                if (Claims(upper, ch.Name, ref bestLen)) best = ch.Name;
+            }
+            // Then the titles this channel's live elements actually render under.
+            // A contract bar draws as its own title ("LOTIC STRESS"), never as
+            // the generic words, so matching names alone let the substring
+            // "STRESS" hand a contract clause to the PLAYER bar (ride
+            // 2026-08-04). A title must beat the generic match OUTRIGHT to take
+            // it — Claims requires strictly longer.
+            foreach (var ch in Channels)
+            {
+                if (ch.Name == null) continue;
+                foreach (var kv in ch.LiveByName)
+                {
+                    // Dead entries linger — nothing prunes this map on teardown,
+                    // so a finished contract's title would otherwise keep
+                    // claiming words for the rest of the session and silently
+                    // suppress unrelated effect chips. BOTH tests earn their
+                    // keep: leaving a contract unloads the scene (D9), so
+                    // fake-null is what prunes a FINISHED contract's titles,
+                    // while activity prunes the within-contract case (action
+                    // groups deactivate as they complete, and the rig view
+                    // toggles the standing display). Deliberately NOT
+                    // RenderedUp: alpha-hidden-but-active would also stop a
+                    // LIVE contract's title claiming its own chip, handing it
+                    // back to the player bar — the defect this rework killed.
+                    var fsm = kv.Value;
+                    if (fsm == null || fsm.gameObject == null
+                        || !fsm.gameObject.activeInHierarchy) continue;
+                    if (Claims(upper, kv.Key, ref bestLen)) best = ch.Name;
+                }
             }
             return best;
         }
 
-        /// <summary>The current bar state for a rendered effect word ("ENERGY",
-        /// "13 CRYO" — the card's own vocabulary): the matching channel's live
-        /// "x of y", longest-name-wins. Null when no channel matches or its
-        /// bar is gone. Feeds the outcome composition (owner ruling: gain/
-        /// loss, then the resulting state).</summary>
-        public static string CurrentFor(string renderedWord)
+        /// <summary>Does this token own the rendered word, beating the best
+        /// match so far? Longest MATCHED TOKEN wins, not longest channel name —
+        /// the winning token may be an element title while the identity handed
+        /// back is its channel's generic name.</summary>
+        private static bool Claims(string upper, string token, ref int bestLen)
         {
-            string best = CanonicalFor(renderedWord);
-            if (best == null) return null;
-            foreach (var ch in Channels)
-            {
-                if (ch.Name != best) continue;
-                var fsm = FirstLive(ch);
-                if (fsm == null) continue;
-                float v = Bounded(ch, fsm, ch.Name, out float m);
-                return Format(v, m);
-            }
-            return null;
+            if (string.IsNullOrEmpty(token) || token.Length <= bestLen) return false;
+            if (!upper.Contains(token.ToUpperInvariant())) return false;
+            bestLen = token.Length;
+            return true;
         }
+
+        // CurrentFor is RETIRED (owner ruling 2026-08-04). An effect chip names
+        // a bar in the card's vocabulary, which is not enough to identify WHICH
+        // instance moved — a bare "STRESS" chip on a crew action reads the same
+        // as the player's. It resolved to a channel and then read that channel's
+        // first live bar, so a contract or crew clause printed the player bar's
+        // value and cap. Chips now speak the movement only; the standing total
+        // belongs to the watched delta, which reads the bar that actually moved.
 
         /// <summary>Any live bar of the channel (single-element channels have
         /// exactly one; same-titled copies are interchangeable).</summary>
@@ -885,6 +1044,21 @@ namespace Sleeptalker.Sleeper2
             var keyVar = bar.FsmVariables.FindFsmString("Contract Stress Variable");
             string stressKey = keyVar != null ? keyVar.Value : null;
             if (string.IsNullOrEmpty(stressKey)) return null;
+            // A forecast is what lies AHEAD, so read the track's own position
+            // and drop every point already reached. The spawn flag alone is a
+            // model of "already happened", not the fact: a crisis that fired
+            // and was then resolved leaves the world, clears the flag's effect
+            // on this scan, and came back as a promise of a point behind us
+            // ("Crises at 5" at 7 of 8 — ride 2026-08-04).
+            // The track's own store value, not a bar's local copy: each copy
+            // holds its own Stress float written in its own Get Stress state,
+            // and FirstLive returns whichever the dictionary yields, so a copy
+            // that has not re-run can read stale-low and keep a passed point in
+            // the list — the same defect by another route. Gate-tier Lua is
+            // sanctioned for exactly this (D15: these reads gate, never speak).
+            // Raw, too: only the SPOKEN value is bounds-ruled, and a cap guessed
+            // low would hold `current` under points the track has really passed.
+            float current = LuaStore.NumF(stressKey) ?? _contractChannel.Value(bar);
 
             var points = new List<int>();
             foreach (var container in StationAtlas.NodeContainers())
@@ -898,6 +1072,9 @@ namespace Sleeptalker.Sleeper2
                         if (isCrisis == null || !isCrisis.Value) continue;
                         float threshold = CrisisThreshold(fsm, stressKey);
                         if (threshold <= 0f) continue;
+                        // The game's own gate is >= the dial's limit, so compare
+                        // against the raw limit rather than the spoken ceiling.
+                        if (current >= threshold) continue;
                         var id = fsm.FsmVariables.FindFsmString("Location Identifier");
                         if (id != null && !string.IsNullOrEmpty(id.Value)
                             && (LuaStore.NumF(id.Value + "_Crisis_Added") ?? 0f) >= 1f)

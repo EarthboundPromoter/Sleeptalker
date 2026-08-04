@@ -790,7 +790,12 @@ namespace Sleeptalker.Sleeper2
                 string text = SpeechService.Clean(tmp.text);
                 if (string.IsNullOrEmpty(text) || !seen.Add(text)) continue;
                 sb.Append(text);
-                if (!text.EndsWith(".", StringComparison.Ordinal)) sb.Append('.');
+                // A fragment that already ends a sentence keeps its own mark —
+                // the window's question line ("Leave the contract?") read as
+                // "?." before this. Same treatment applied to the two sibling
+                // joiners in Describe, which had the same period-only test.
+                char last = text[text.Length - 1];
+                if (last != '.' && last != '!' && last != '?') sb.Append('.');
                 sb.Append(' ');
             }
             string result = sb.ToString().TrimEnd();
