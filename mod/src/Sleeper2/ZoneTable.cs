@@ -195,11 +195,12 @@ namespace Sleeptalker.Sleeper2
                 // the button refusing activation, which is a single
                 // unambiguous flag the game's own click path reads too.
                 // So: no selection opinion at all — ask the button.
-                if (!Interactable(button))
+                var refusal = CommitRefusal(button);
+                if (refusal != null)
                 {
-                    Table.Say(Lex.T("zone.commit.unselectable"));
-                    Plugin.Log.LogWarning("[Zone] commit refused — button not"
-                        + " interactable at \"" + nodes[row].Name + "\" — capture");
+                    Table.Say(Lex.T(refusal));
+                    Plugin.Log.LogWarning("[Zone] commit refused (" + refusal
+                        + ") at \"" + nodes[row].Name + "\" — capture");
                     return;
                 }
                 _driveEchoUntil = Time.unscaledTime + 1.5f;
@@ -268,16 +269,25 @@ namespace Sleeptalker.Sleeper2
         private static float _verifyDeadline = -1f;
         private static readonly HashSet<string> _scatterLogged = new HashSet<string>();
 
-        /// <summary>Can this button be activated right now — the game's own
-        /// clickability truth (Selectable.IsInteractable folds in parent
-        /// CanvasGroups), the exact flag the game's click path reads and
-        /// the exact one the Solheim dead presses failed. No selection
-        /// proxy: selection is not in doubt (owner, 2026-08-04).</summary>
-        private static bool Interactable(GameObject button)
+        /// <summary>Why the game would refuse this button, as a Lex key, or
+        /// null when it will accept activation. Mirrors Navigator.Click's OWN
+        /// refusal test exactly — the first cut asked only IsInteractable(),
+        /// a strict SUBSET (it ignores object activity), so an inactive
+        /// button passed the gate and then died mute inside the click path:
+        /// 42 raw refusals at Wellspring against zero spoken reasons (owner
+        /// bug 2026-08-04). An undrawn node is reported as such: its whole
+        /// Location Contents subtree is deactivated while the camera is
+        /// elsewhere, so "off screen" is the render-honest reading, not a
+        /// guess about selection.</summary>
+        private static string CommitRefusal(GameObject button)
         {
-            if (button == null) return false;
+            if (button == null) return "zone.commit.unselectable";
+            if (!button.activeInHierarchy) return "zone.commit.offscreen";
             var sel = button.GetComponent<UnityEngine.UI.Selectable>();
-            return sel == null || sel.IsInteractable();
+            if (sel == null) return null;
+            if (!sel.isActiveAndEnabled || !sel.IsInteractable())
+                return "zone.commit.unselectable";
+            return null;
         }
 
         // (AlignmentTick retired 2026-08-04 with the selection-proxy gate:

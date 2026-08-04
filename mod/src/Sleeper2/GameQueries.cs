@@ -576,6 +576,20 @@ namespace Sleeptalker.Sleeper2
                 var p = gimbal.position;
                 target = GimbalArmAngle
                     - Mathf.Atan2(marker.y - p.y, marker.z - p.z) * Mathf.Rad2Deg;
+                // Unwrap onto the arc (owner bug 2026-08-04, WELLSPRING SHAFT
+                // unreachable): Atan2's branch cut sits at +/-180, and a node
+                // level with the pivot but far behind it lands exactly on it
+                // — Shaft reads dy -59 / dz -7951, so Atan2 returns -179.6
+                // and the raw target came out 323, clamping to the OPPOSITE
+                // end of the band (+80, 117 degrees wrong). The camera never
+                // arrived, so the game left the node's Location Contents
+                // deactivated: unreadable description, and a Location Button
+                // that no click path will accept. Unwrapped, Shaft targets
+                // -37 and clamps to the -30 band edge, ~7 degrees off (inside
+                // OutOfBandSlack). Verified a no-op for every other node at
+                // this hub — their targets already lie inside the range.
+                // ANGLES ONLY: the Z/Y wires are positions, never wrapped.
+                target = Mathf.Repeat(target + 180f, 360f) - 180f;
             }
 
             float clamped = Mathf.Clamp(target, min.Value, max.Value);

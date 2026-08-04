@@ -49,6 +49,7 @@ namespace Sleeptalker.Scaffold
                 // Zone table
                 { "zone.empty", "No locations found." },
                 { "zone.commit.unselectable", "Not selectable." },
+                { "zone.commit.offscreen", "Off screen." },
                 { "zone.new", "New." },
                 { "zone.disabled", "Disabled." },
                 { "zone.col.name", "Name" },
