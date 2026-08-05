@@ -11,7 +11,7 @@ using Priority = Sleeptalker.Scaffold.Priority;
 
 namespace Sleeptalker
 {
-    [BepInPlugin(Id, "Sleeptalker", "0.8.5")]
+    [BepInPlugin(Id, "Sleeptalker", "0.9.0")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Id = "com.sleeptalker.mod";
@@ -107,8 +107,8 @@ namespace Sleeptalker
             CycleGate.Init();
             StationCensus.Init();
 
-            Log.LogInfo("Sleeptalker 0.8.5 loaded.");
-            SpeechService.Say("Sleeptalker 0.8.5.", Priority.Queued, "init");
+            Log.LogInfo("Sleeptalker 0.9.0 loaded.");
+            SpeechService.Say("Sleeptalker 0.9.0.", Priority.Queued, "init");
         }
 
         private void Update()

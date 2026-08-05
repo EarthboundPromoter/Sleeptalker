@@ -1,6 +1,6 @@
 # Sleeptalker
 
-**Version 0.8.5 — beta**
+**Version 0.9.0 — beta**
 
 A screen-reader mod for **Citizen Sleeper 2: Starward Vector**: it speaks the
 game's interface, dice, clocks, contracts, and story through NVDA or JAWS (via
@@ -44,7 +44,7 @@ From the [Steam store page](https://store.steampowered.com/app/2442460/Citizen_S
 2. Extract it into the Citizen Sleeper 2 game folder (the one containing
    `Citizen Sleeper 2.exe`), merging folders if asked. The zip carries the
    BepInEx mod loader with the mod already in place, plus the speech DLLs.
-3. Launch the game. You'll hear "Sleeptalker 0.8.5." To update, extract the
+3. Launch the game. You'll hear "Sleeptalker 0.9.0." To update, extract the
    newer zip the same way.
 
 ## How the mod works
