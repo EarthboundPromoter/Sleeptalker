@@ -243,7 +243,7 @@ namespace Sleeptalker.Sleeper2
         public static void Tick()
         {
             VerifyTick();
-            DescWatchTick();
+            RowWatchTick();
             TaskAnnounceTick();
             if (!_entered) return;
             var mode = ModeModel.Current();
@@ -642,56 +642,112 @@ namespace Sleeptalker.Sleeper2
             if (col <= 0)
             {
                 var node = nodes[row];
-                // Description render race (log finding 2026-08-02: ~8 rows
-                // spoke truncated on arrival, complete on a re-read — the
-                // billboard populates a beat after the hover). An empty
-                // description arms a short follow-up watch that speaks it
-                // alone the frame it draws; the arrival read stays instant.
-                if (string.IsNullOrEmpty(StationAtlas.ReadDescription(node)))
-                {
-                    _descWatchButton = node.Button;
-                    _descWatchDeadline = Time.unscaledTime + 1f;
-                }
-                else
-                {
-                    _descWatchButton = null;
-                }
+                // Billboard render race (log finding 2026-08-02, WIDENED after
+                // the ride of 2026-08-04). The arrival read is a snapshot of a
+                // subtree that populates a beat after the hover, and the whole
+                // report races, not just its last clause: 55 rows spoke short
+                // in one ride and 8 nodes were read both with and without their
+                // "New" flag, because only the description had a way to arrive
+                // late. Now every facet is snapshotted here and the watch below
+                // speaks whichever ones turn up. The arrival read stays instant
+                // — the live-after-hover invariant is load-bearing (M12 b).
+                _watchButton = node.Button;
+                _watchFacets = FacetsOf(node);
+                _watchDeadline = Time.unscaledTime + FacetSettleSeconds;
+                _watchSkip = 0;
                 return CompressedReport(node);
             }
             var facet = StationAtlas.ReadNameFacet(nodes[row]);
             return NameCell(facet) + " " + CellRead(row, col);
         }
 
-        // The description follow-up watch (one row at a time, keyed by the
+        // The row-report completion watch (one row at a time, keyed by the
         // node's stable Button object — Node instances rebuild on the cache
         // window; a row change or table exit drops it, so only the row the
         // cursor still sits on may complete late).
-        private static GameObject _descWatchButton;
-        private static float _descWatchDeadline;
+        private static GameObject _watchButton;
+        private static RowFacets _watchFacets;
+        private static float _watchDeadline;
+        private static int _watchSkip;
+        private const float FacetSettleSeconds = 2.5f;  // the wire-settle deadline (M12 c)
+        private const int FacetPollTicks = 4;           // ~15 recomposes/sec, not one per frame
 
-        private static void DescWatchTick()
+        /// <summary>The facets of one row report, as they read at an instant.</summary>
+        private struct RowFacets
         {
-            if (_descWatchButton == null) return;
-            if (!_entered) { _descWatchButton = null; return; }
+            public bool IsNew;
+            public string Clock;
+            public string Drives;
+            public string Actions;
+            public string Desc;
+            /// <summary>Nothing is obviously still to come. A node may honestly
+            /// have no clock, no drives and no description, so this can only ever
+            /// be a hint — the billboard's own render state is the real test.</summary>
+            public bool Complete { get { return !string.IsNullOrEmpty(Desc); } }
+        }
+
+        private static RowFacets FacetsOf(StationAtlas.Node node)
+        {
+            return new RowFacets
+            {
+                IsNew = StationAtlas.ReadNameFacet(node).IsNew,
+                Clock = ClockCell(node),
+                Drives = DrivesCell(node),
+                Actions = ActionsCell(node),
+                Desc = StationAtlas.ReadDescription(node),
+            };
+        }
+
+        private static void RowWatchTick()
+        {
+            if (_watchButton == null) return;
+            if (!_entered) { _watchButton = null; return; }
             var nodes = Nodes();
             int row = Table.Row;
-            if (row < 0 || row >= nodes.Count || nodes[row].Button != _descWatchButton)
+            if (row < 0 || row >= nodes.Count || nodes[row].Button != _watchButton)
             {
-                _descWatchButton = null;
+                _watchButton = null;
                 return;
             }
-            string desc = StationAtlas.ReadDescription(nodes[row]);
-            if (!string.IsNullOrEmpty(desc))
+            if (++_watchSkip < FacetPollTicks) return;
+            _watchSkip = 0;
+
+            var node = nodes[row];
+            var now = FacetsOf(node);
+            // Only ARRIVALS complete a report. A facet that changed value is a
+            // live change and belongs to whatever channel owns it; re-reading it
+            // here would turn the zone table into a second, competing announcer.
+            var sb = new System.Text.StringBuilder();
+            if (now.IsNew && !_watchFacets.IsNew)
+                sb.Append(Lex.T("zone.new"));   // carries its own terminator
+            if (!string.IsNullOrEmpty(now.Clock) && string.IsNullOrEmpty(_watchFacets.Clock))
+                Append(sb, Lex.T("zone.col.clock") + ": " + now.Clock + ".");
+            if (!string.IsNullOrEmpty(now.Drives) && string.IsNullOrEmpty(_watchFacets.Drives))
+                Append(sb, Lex.T("zone.col.drives") + ": " + now.Drives + ".");
+            if (!string.IsNullOrEmpty(now.Actions) && string.IsNullOrEmpty(_watchFacets.Actions))
+                Append(sb, now.Actions);
+            if (!string.IsNullOrEmpty(now.Desc) && string.IsNullOrEmpty(_watchFacets.Desc))
+                Append(sb, now.Desc + ".");
+
+            if (sb.Length > 0)
             {
-                _descWatchButton = null;
-                SpeechService.Say(desc + ".", Priority.Queued, "zone");
-                return;
+                _watchFacets = now;
+                SpeechService.Say(sb.ToString(), Priority.Queued, "zone");
+                // Keep watching: a billboard that drew its name and description
+                // this frame may still be building its action group.
             }
-            if (Time.unscaledTime >= _descWatchDeadline)
-            {
-                // Honest-empty: some nodes simply render no description.
-                _descWatchButton = null;
-            }
+            // Stand down once the row is drawn and has said everything it has,
+            // or at the deadline — some nodes honestly render no description,
+            // and at a crowded hub the pan may never arrive at all (M14 open).
+            if ((StationAtlas.BillboardUp(node) && now.Complete && sb.Length == 0)
+                || Time.unscaledTime >= _watchDeadline)
+                _watchButton = null;
+        }
+
+        private static void Append(System.Text.StringBuilder sb, string part)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            sb.Append(part);
         }
 
         /// <summary>Facet browse: header-labeled cell, stable geometry — an empty

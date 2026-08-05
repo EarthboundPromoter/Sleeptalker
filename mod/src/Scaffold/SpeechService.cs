@@ -36,9 +36,26 @@ namespace Sleeptalker.Scaffold
         private static readonly Regex SpacePattern = new Regex("[ \t]{2,}", RegexOptions.Compiled);
         /// <summary>B2/C6: punctuation stutters — sprite-boundary seams ("action,.
         /// select") and authored double periods ("actions..") — collapse to the run's
-        /// first mark. Spaces between marks count as part of the run (", ." shapes).</summary>
+        /// first mark. Spaces between marks count as part of the run (", ." shapes).
+        /// EXCEPT the authored ELLIPSIS (ride 2026-08-04: this rule was eating the
+        /// game's own hesitation marks — "It's... impossible." spoke as "It's.
+        /// impossible.", "What the...?" as "What the.?", ten dialogue lines in one
+        /// ride). An unbroken run of three or more periods is prose, not a seam:
+        /// normalize it to exactly three (so a joiner's appended period cannot grow
+        /// it to four) and leave it in the utterance, where the reader gives it the
+        /// pause the writing asked for. Transcode, never strip.</summary>
         private static readonly Regex StutterPattern =
             new Regex("([.,])(?:\\s*[.,])+", RegexOptions.Compiled);
+
+        private static readonly MatchEvaluator StutterEvaluator = CollapseStutter;
+
+        private static string CollapseStutter(Match m)
+        {
+            string run = m.Value;
+            for (int i = 0; i < run.Length; i++)
+                if (run[i] != '.') return run.Substring(0, 1); // mixed or spaced = a seam
+            return run.Length >= 3 ? "..." : run.Substring(0, 1);
+        }
 
         public static void Init()
         {
@@ -248,7 +265,7 @@ namespace Sleeptalker.Scaffold
             text = text.Replace('�', '\'');
             text = TagPattern.Replace(text, " ");
             text = text.Replace('\n', ' ').Replace('\r', ' ').Replace('\t', ' ');
-            text = StutterPattern.Replace(text, "$1");
+            text = StutterPattern.Replace(text, StutterEvaluator);
             text = SpacePattern.Replace(text, " ").Trim();
             // Leading slash-run decoration ("// LOCAL", "/ STRESS") is visual
             // styling, not content — the S3 transcode rule, applied CENTRALLY

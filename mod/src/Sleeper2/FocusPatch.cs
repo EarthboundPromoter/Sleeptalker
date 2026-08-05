@@ -60,6 +60,10 @@ namespace Sleeptalker.Sleeper2
         // silent until the player's first input; user navigation always speaks.
         private static bool _sceneSettled;
 
+        /// <summary>Has the player taken control of this scene yet? Anything the
+        /// game does before that is load-time construction, not an event.</summary>
+        public static bool SceneSettled => _sceneSettled;
+
         public static void OnSceneChanged() => _sceneSettled = false;
 
         public static void MarkSettled()

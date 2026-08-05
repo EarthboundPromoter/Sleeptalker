@@ -36,6 +36,12 @@ namespace Sleeptalker.Sleeper2
             public Func<PlayMakerFSM, float> Value;    // current value, from the bar's own vars
             public Func<PlayMakerFSM, float> Max;      // capacity; 0 = unknown, spoken without "of"
             public Func<PlayMakerFSM, string> SpokenName; // per-instance name (crew); null = Name
+            // The PLACEHOLDER key this element wears before the screen has named
+            // it ("Crew 1 Stress", the generic contract title). Only a rename OUT
+            // of this name is the same thing under a better label; a rename from
+            // one rendered name to another is a different OCCUPANT on a reused
+            // bar. Null = this channel's name is fixed and cannot rename.
+            public Func<PlayMakerFSM, string> GenericName;
             public bool StripRendered;                 // renders in the BOTTOM strip, not the top bar (D6)
             public bool AnnounceWhenDrawnOnly;         // suppress changes while the bar isn't drawn (crew, D10)
             public bool AnnounceOnly;                  // change clock only — never a Read()/readout line
@@ -52,7 +58,22 @@ namespace Sleeptalker.Sleeper2
                 = new Dictionary<string, float>();     // direction + first-signal mute, per element
             public readonly Dictionary<string, PlayMakerFSM> LiveByName
                 = new Dictionary<string, PlayMakerFSM>(); // live bar per element, for on-demand Read()
+            // Elements whose baseline is still POPULATING — see OnChanged.
+            public readonly Dictionary<string, Provisional> Settling
+                = new Dictionary<string, Provisional>();
         }
+
+        /// <summary>A first-sighting baseline that has not settled yet.</summary>
+        internal sealed class Provisional
+        {
+            public int Quiet;
+            public int Age;
+            public float Born;
+        }
+
+        private const int SettleQuietTicks = 15;    // ~0.25s of no further writes
+        private const int SettleMaxAgeTicks = 90;   // never-quiet backstop
+        private const float SettleHardSeconds = 30f; // safety valve, see SettleTick
 
         private static readonly List<Channel> Channels = new List<Channel>();
         private static Channel _contractChannel;
@@ -118,6 +139,9 @@ namespace Sleeptalker.Sleeper2
                 Value = fsm => FloatVar(fsm, "Stress"),
                 Max = CrewMax,
                 SpokenName = fsm => CrewSpokenName(fsm) + " " + Lex.T("vitals.stress"),
+                // "Crew 1 Stress" — what the bar keys as before its panel has
+                // rendered a character name.
+                GenericName = fsm => CrewName(fsm) + " " + Lex.T("vitals.stress"),
                 // Owner ruling 2026-08-02: crew bars poll while UNDRAWN outside
                 // contracts — those changes cache silently (wake summary +
                 // contract panels carry the truth). Escape hatch: this flag.
@@ -179,6 +203,7 @@ namespace Sleeptalker.Sleeper2
                 // the contract and changes per job — speak it (Name stays the
                 // generic for effect-word matching).
                 SpokenName = ContractStressName,
+                GenericName = fsm => Lex.T("vitals.contract-stress"),
                 // Owner design 2026-08-03: every contract-stress read carries
                 // the future crisis points — "x of y. Crises at 9." — with
                 // already-spawned crises excluded.
@@ -363,6 +388,41 @@ namespace Sleeptalker.Sleeper2
             if (stale == null) return;
             foreach (var old in stale)
             {
+                // Rename, or a new OCCUPANT on a reused bar? (ride 2026-08-04,
+                // the "YU-JIN Stress down 3" report: taking a different crew on
+                // a contract re-points the SAME bar object at a different
+                // person. Reference identity cannot see that, so this retirement
+                // carried Bliss's baseline of 4 onto Yu-Jin, whose real value
+                // was 1, and the outcome spoke "down 3" in the same sentence as
+                // the chip that said "plus STRESS".) The discriminator is
+                // mechanism, not spelling: a rename OUT of the channel's own
+                // placeholder is the same element finally named; anything else
+                // is a different element wearing the old one's slot. Nothing of
+                // the previous occupant may cross — not the baseline, not the
+                // cycle-window delta, not a maturing announce. The surviving
+                // key is stripped back to unseen so OnChanged's catch-up branch
+                // re-baselines it silently (the same treatment any newly sighted
+                // bar gets); the movement that coincides with the swap is lost,
+                // which is the standing trade — a swallowed change is recoverable
+                // by the next read, a confidently wrong number is not.
+                if (!IsPlaceholderRename(ch, old, fsm))
+                {
+                    ch.LiveByName.Remove(old);
+                    ch.LastByName.Remove(old);
+                    ch.LastByName.Remove(key);
+                    ch.Settling.Remove(old);
+                    ch.Settling.Remove(key);
+                    _cycleDeltas.Remove(old);
+                    _cycleDeltas.Remove(key);
+                    for (int i = _pending.Count - 1; i >= 0; i--)
+                        if (_pending[i].Ch == ch
+                            && (_pending[i].Key == old || _pending[i].Key == key))
+                            _pending.RemoveAt(i);
+                    Plugin.Log.LogInfo("[Vitals] element under \"" + old
+                        + "\" is now a different occupant rendering as \"" + key
+                        + "\" — baseline reset, this change stays silent");
+                    continue;
+                }
                 if (ch.LastByName.TryGetValue(old, out float baseline))
                 {
                     if (!ch.LastByName.ContainsKey(key))
@@ -407,11 +467,34 @@ namespace Sleeptalker.Sleeper2
                 // announce and the next signal re-diffs, which is a silence.
                 foreach (var p in _pending)
                     if (p.Ch == ch && p.Key == old) p.Key = key;
+                // An unsettled first-sighting baseline travels with the rename:
+                // the bar is one element still populating, and dropping the flag
+                // here would let the rest of that same burst announce itself.
+                if (ch.Settling.TryGetValue(old, out var s))
+                {
+                    if (!ch.Settling.ContainsKey(key)) ch.Settling[key] = s;
+                    ch.Settling.Remove(old);
+                }
                 ch.LiveByName.Remove(old);
                 ch.LastByName.Remove(old);
                 Plugin.Log.LogInfo("[Vitals] retired stale element name \"" + old
                     + "\" — the same bar now renders as \"" + key + "\"");
             }
+        }
+
+        /// <summary>Is retiring <paramref name="old"/> in favour of the freshly
+        /// computed key a RENAME of one element, or a new occupant on a reused
+        /// bar? A rename only ever runs one way — out of the channel's own
+        /// placeholder, the name the bar wears until the screen has named it.
+        /// Channels with a fixed Name cannot rename at all, so any collision
+        /// there is two distinct elements and the safe answer is the same.</summary>
+        private static bool IsPlaceholderRename(Channel ch, string old, PlayMakerFSM fsm)
+        {
+            if (ch.GenericName == null) return false;
+            string generic;
+            try { generic = ch.GenericName(fsm); }
+            catch { return false; }
+            return !string.IsNullOrEmpty(generic) && old == generic;
         }
 
         /// <summary>Same physical bar? Reference identity for every channel —
@@ -422,18 +505,25 @@ namespace Sleeptalker.Sleeper2
         /// (same-titled copies are a decoded fact), so there the identity is
         /// the stress key those copies share.</summary>
         /// <summary>The key this element should be filed under: its freshly
-        /// computed name, UNLESS that name is the generic contract fallback and
-        /// this same bar is already filed under a rendered title. There is no
-        /// name cache on the contract channel (the crew channel has one), and
-        /// ContractStressName recomputes per signal — returning the generic
-        /// whenever no title happens to be drawn at that instant. Without this,
-        /// a copy whose chrome never draws would RETIRE the title another copy
-        /// established, and the 5s seed-retry deadline fires exactly that path
-        /// by design. Adopt the rendered name rather than overwrite it.</summary>
+        /// computed name, UNLESS that name is the channel's PLACEHOLDER and this
+        /// same bar is already filed under a rendered one. Both naming channels
+        /// recompute per signal and both can hand back the placeholder when
+        /// nothing happens to be drawn at that instant — ContractStressName
+        /// whenever the chrome is down, CrewSpokenName before its panel has ever
+        /// rendered. Without this a copy whose chrome never draws would RETIRE
+        /// the title another copy established, and the 5s seed-retry deadline
+        /// fires exactly that path by design. Adopt the rendered name, never
+        /// overwrite it (owner law, S10) — applied to EVERY naming channel as of
+        /// 2026-08-04, since the occupant test below now reads a placeholder
+        /// arriving after a rendered name as a different element entirely, and
+        /// would reset a live baseline on what is only an undrawn moment.</summary>
         private static string PreferRenderedKey(Channel ch, string key, PlayMakerFSM fsm)
         {
-            if (ch != _contractChannel || key != Lex.T("vitals.contract-stress"))
-                return key;
+            if (ch.GenericName == null) return key;
+            string generic;
+            try { generic = ch.GenericName(fsm); }
+            catch { return key; }
+            if (string.IsNullOrEmpty(generic) || key != generic) return key;
             foreach (var kv in ch.LiveByName)
             {
                 if (kv.Key == key) continue;
@@ -506,6 +596,29 @@ namespace Sleeptalker.Sleeper2
             if (!ch.LastByName.TryGetValue(key, out float last))
             {
                 ch.LastByName[key] = value;   // load-time catch-up: cache, stay silent
+                ch.Settling[key] = new Provisional { Born = Time.unscaledTime };
+                return;
+            }
+            // A first sighting's baseline is PROVISIONAL until the bar goes
+            // quiet (ride 2026-08-04): the resource slots populate from zero
+            // across a few frames when a save loads, so the catch-up above
+            // banked a 0 and the very next write announced the save's own
+            // contents as a gain — "Supplies up, 4 of 5. Fuel up, 7 of 10.
+            // Cryo up, 4." on a cycle-90 load, three movements that never
+            // happened. Writes inside the settle window re-baseline silently.
+            // The window is keyed to the ELEMENT's first sighting, never to a
+            // scene load: after a travel the key already exists, so an arrival
+            // payout still speaks (the log's "Cryo up, 215." is real money).
+            // Bars seeded through DiscoverStates never reach here, so M13's
+            // promise — the first change speaks against the seeded baseline —
+            // is untouched.
+            if (ch.Settling.TryGetValue(key, out var settling))
+            {
+                if (value != last)
+                    Plugin.Log.LogInfo("[Vitals] " + key + " " + last + " -> "
+                        + value + " while its first baseline settles — silent");
+                ch.LastByName[key] = value;
+                settling.Quiet = 0;
                 return;
             }
             if (value == last)
@@ -606,6 +719,7 @@ namespace Sleeptalker.Sleeper2
         {
             PayoutTick();
             SeedRetryTick();
+            SettleTick();
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var p = _pending[i];
@@ -617,6 +731,50 @@ namespace Sleeptalker.Sleeper2
                         + " never went quiet — aged announce (capture)");
                 _pending.RemoveAt(i);
                 SpeakVerified(p);
+            }
+        }
+
+        /// <summary>Retire first-sighting baselines once they have gone quiet.
+        ///
+        /// The clock does not start until the player has control of the scene.
+        /// A save load populates the bars over SECONDS, not frames — in the ride
+        /// of 2026-08-04 the first Fuel read and the announcement that followed
+        /// it sat five seconds apart, on either side of the load — so a quiet
+        /// window alone would have expired in the middle of the very burst it
+        /// exists to absorb. FocusPatch already owns this idea for focus (the
+        /// boot sweep: the game walks controls the player cannot touch yet, and
+        /// none of it is an event); vitals answer to the same fact.
+        ///
+        /// Two backstops, because a gate that can stick is a gate that can mute
+        /// the whole channel: the tick age caps a bar that never goes quiet, and
+        /// the wall clock caps a scene that never reports settling at all.</summary>
+        private static void SettleTick()
+        {
+            bool settled = FocusPatch.SceneSettled;
+            float now = Time.unscaledTime;
+            foreach (var ch in Channels)
+            {
+                if (ch.Settling.Count == 0) continue;
+                List<string> done = null;
+                foreach (var kv in ch.Settling)
+                {
+                    var s = kv.Value;
+                    if (now - s.Born >= SettleHardSeconds)
+                    {
+                        LogOnce("[Vitals] " + kv.Key + " held a provisional baseline "
+                            + "for " + SettleHardSeconds + "s without the scene settling"
+                            + " — released (capture)");
+                        (done ?? (done = new List<string>())).Add(kv.Key);
+                        continue;
+                    }
+                    if (!settled) continue;   // still load-time construction
+                    s.Quiet++;
+                    s.Age++;
+                    if (s.Quiet >= SettleQuietTicks || s.Age >= SettleMaxAgeTicks)
+                        (done ?? (done = new List<string>())).Add(kv.Key);
+                }
+                if (done == null) continue;
+                foreach (var key in done) ch.Settling.Remove(key);
             }
         }
 
