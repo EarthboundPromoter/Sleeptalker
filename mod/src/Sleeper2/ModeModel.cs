@@ -82,10 +82,28 @@ namespace Sleeptalker.Sleeper2
             return Mode.Station;
         }
 
+        /// <summary>Is the game showing a LOCATION? Render first, backing second
+        /// (owner law) — and this determiner had it backwards.
+        ///
+        /// The game can settle the player inside a location without ever raising
+        /// its own "Action View?" bool. Waking in a contract's rest node does
+        /// exactly that (owner report 2026-08-05): the unit was drawn on screen,
+        /// the flag read false, so this returned false, Derive fell through to its
+        /// Station FLOOR, and the mod drove the ZONE table across a surface the
+        /// game was not showing — the proximity selector held NOTHING and every
+        /// commit refused, with no way out but quitting to the menu. The rig is
+        /// the same class of player housing and never stranded, because the rig
+        /// has a mode of its own; the contract-side rest node had none.
+        ///
+        /// The drawn card group is the screen's own answer, so it leads. The bool
+        /// stays as the backing lane: it is right in every ordinary entry, and
+        /// keeping it means nothing that works today depends on the new test.</summary>
         public static bool ActionViewUp()
         {
+            if (StationAtlas.DrawnActionGroup() != null) return true;
+            // Find*, never Get* for existence (S9 law).
             var v = HutongGames.PlayMaker.FsmVariables.GlobalVariables
-                .GetFsmBool("Action View?");
+                .FindFsmBool("Action View?");
             return v != null && v.Value;
         }
     }

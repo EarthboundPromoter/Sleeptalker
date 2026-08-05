@@ -59,7 +59,70 @@ namespace Sleeptalker.Sleeper2
         private static readonly List<Transform> Containers = new List<Transform>();
         private static bool _containersFresh;
 
-        public static void InvalidateScene() => _containersFresh = false;
+        public static void InvalidateScene()
+        {
+            _containersFresh = false;
+            _groupContainersFresh = false;
+        }
+
+        private static readonly List<Transform> GroupContainers = new List<Transform>();
+        private static bool _groupContainersFresh;
+
+        /// <summary>The action-group containers: the canvases park every location's
+        /// card group under one of these two. Collected by the SAME sweep that
+        /// finds the node containers — that sweep already walks every transform in
+        /// memory, and it runs on every scene load, so a second walk for this would
+        /// double a cost the audit already flagged as the log's biggest line.</summary>
+        private static List<Transform> FindGroupContainers()
+        {
+            // Force the sweep rather than merely calling it: FindContainers
+            // early-returns on ITS own flag, so if the two ever drifted apart
+            // this list would stay empty for the session and the location
+            // surface would become invisible to the mode model.
+            if (!_groupContainersFresh) { _containersFresh = false; FindContainers(); }
+            return GroupContainers;
+        }
+
+        /// <summary>The location card group the screen is DRAWING, or null when the
+        /// player is out on the node surface. This is the render-first answer to
+        /// "is the game showing a location?" — see ModeModel.ActionViewUp for why
+        /// the game's own "Action View?" bool cannot be trusted to say so.
+        ///
+        /// Ambiguity returns the FIRST drawn group rather than null, and logs: a
+        /// null here would leave the location table entered with no rows, which is
+        /// the very soft lock this whole path exists to prevent.</summary>
+        private static int _drawnGroupFrame = -1;
+        private static Transform _drawnGroup;
+
+        public static Transform DrawnActionGroup()
+        {
+            // Per frame: the mode model and the location table both ask, and the
+            // answer walks an alpha chain per group. One evaluation per frame is
+            // the same discipline ModeModel itself uses.
+            if (Time.frameCount == _drawnGroupFrame) return _drawnGroup;
+            _drawnGroupFrame = Time.frameCount;
+            _drawnGroup = DrawnActionGroupUncached();
+            return _drawnGroup;
+        }
+
+        private static Transform DrawnActionGroupUncached()
+        {
+            Transform found = null;
+            foreach (var container in FindGroupContainers())
+            {
+                if (container == null) continue;
+                foreach (Transform group in container)
+                {
+                    if (!Util.RenderedUp(group)) continue;
+                    if (found == null) { found = group; continue; }
+                    LogOnce("[Atlas] two action groups drawn at once: "
+                        + found.name + " and " + group.name
+                        + " — taking the first (capture)");
+                    return found;
+                }
+            }
+            return found;
+        }
 
         /// <summary>Node containers by STRUCTURE, never by name (ride V1, owner
         /// correction — the rig's container is "Rig UI", not "Locations"; the
@@ -71,6 +134,7 @@ namespace Sleeptalker.Sleeper2
         {
             if (_containersFresh) return Containers;
             Containers.Clear();
+            GroupContainers.Clear();
             // INCLUDING inactive (ride V3 zone-table kill): the hub Locations
             // container is deactivated on the rig side and during boot beats —
             // a scan that runs in such a moment must still discover it. Activity
@@ -78,6 +142,9 @@ namespace Sleeptalker.Sleeper2
             foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
             {
                 if (!t.gameObject.scene.IsValid()) continue;
+                // Action-group containers ride this same sweep (see FindGroupContainers).
+                if (t.name == "1_Action Groups" || t.name == "Rig Action Groups")
+                    GroupContainers.Add(t);
                 bool isContainer = false;
                 foreach (Transform child in t)
                 {
@@ -90,6 +157,7 @@ namespace Sleeptalker.Sleeper2
                 Plugin.Log.LogInfo("[Atlas] container: " + Util.PathOf(t.gameObject));
             }
             _containersFresh = true;
+            _groupContainersFresh = true;
             return Containers;
         }
 
@@ -354,6 +422,20 @@ namespace Sleeptalker.Sleeper2
             return facet;
         }
 
+        /// <summary>Is this node's billboard subtree DRAWN? Every facet below —
+        /// the New shine, the clock, the drive pips, the action group, the
+        /// description — hangs off Billboard Elements, and the game leaves that
+        /// subtree deactivated until its camera pan arrives (M14 diagnosis of
+        /// record). While it is down, a row report is a snapshot of a node that
+        /// has not finished drawing, and every empty facet reads "not yet",
+        /// not "none". Render-first: this asks the screen, not a model of it.</summary>
+        public static bool BillboardUp(Node node)
+        {
+            var billboard = node.Root != null
+                ? node.Root.Find("Location Contents/Billboard Elements") : null;
+            return billboard != null && billboard.gameObject.activeInHierarchy;
+        }
+
         /// <summary>Rendered description line (live). Null when nothing renders.</summary>
         public static string ReadDescription(Node node)
         {
@@ -454,7 +536,14 @@ namespace Sleeptalker.Sleeper2
             {
                 if (!card.gameObject.activeSelf) continue;
                 string id = ActionIdentifierOf(card);
-                if (id == null) continue; // clocks, notifications, stress meters
+                if (id == null)
+                {
+                    // The End Cycle card is a real, pressable option and counts
+                    // toward the row's tally — it just tracks no completion of
+                    // its own (there is no <ID>_COMPLETE to ask about).
+                    if (IsEndCycleCard(card)) facet.Cards++;
+                    continue; // else clocks, notifications, stress meters
+                }
                 facet.Cards++;
                 var complete = LuaStore.Num(id + "_COMPLETE");
                 if (complete.HasValue && complete.Value >= 1) facet.Unavailable++;
@@ -462,11 +551,44 @@ namespace Sleeptalker.Sleeper2
             return facet;
         }
 
+        /// <summary>Is this card the END CYCLE card? A THIRD card class, beside
+        /// the identifier-bearing actions and the clocks (owner report 2026-08-04:
+        /// the Abandoned Unit soft-locked — its group holds exactly one card, an
+        /// End Cycle, and the row scan admitted neither class, so the view landed
+        /// "Nothing here." and every arrow repeated it with the only option on
+        /// screen unreachable). The card carries no "Action Identifier", so it
+        /// must be recognised by mechanism: its FSM alone owns the supply ladder
+        /// that decides what ending a cycle costs. Corpus of record — the state
+        /// pair below has exactly 3 carriers game-wide and all 3 ARE this card
+        /// (the rig display's and the two contract rest-node copies); the
+        /// "EndCycle" EVENT was rejected as the key, since 41 Location Buttons
+        /// and the sibling Cycle Controller Relay raise it too.</summary>
+        private static bool _endCycleClassLogged;
+
+        internal static bool IsEndCycleCard(Transform card)
+        {
+            if (card == null) return false;
+            if (FsmWithStates(card, "Crew Depletion", "Supplied") == null) return false;
+            if (!_endCycleClassLogged)
+            {
+                _endCycleClassLogged = true;
+                // Info, not a warning: this class is understood and expected.
+                Plugin.Log.LogInfo("[Atlas] End Cycle card admitted as an action row ("
+                    + card.name + ")");
+            }
+            return true;
+        }
+
         internal static string ActionIdentifierOf(Transform card)
         {
             foreach (var fsm in card.GetComponentsInChildren<PlayMakerFSM>(true))
             {
-                var id = fsm.FsmVariables.GetFsmString("Action Identifier");
+                // Find*, never Get* (S9 law): GetFsmString AUTO-CREATES the
+                // variable, so this existence check was quietly writing an empty
+                // "Action Identifier" onto every FSM it inspected. The empty
+                // guard below kept the ANSWER right, which is why it went
+                // unnoticed — the pollution was the cost.
+                var id = fsm.FsmVariables.FindFsmString("Action Identifier");
                 if (id != null && !string.IsNullOrEmpty(id.Value)) return id.Value;
             }
             return null;

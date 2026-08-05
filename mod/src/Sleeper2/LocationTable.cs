@@ -180,7 +180,13 @@ namespace Sleeptalker.Sleeper2
             foreach (Transform child in group)
             {
                 if (!child.gameObject.activeInHierarchy) continue;
-                if (StationAtlas.ActionIdentifierOf(child) != null) _actions.Add(child);
+                // The End Cycle card carries no Action Identifier and is not a
+                // clock, so it fell between both row classes and left the rest
+                // node with no reachable rows at all (owner report 2026-08-04).
+                // It reads and commits through the ordinary action path — its
+                // name, description and Dice Slot Button are the same anatomy.
+                if (StationAtlas.ActionIdentifierOf(child) != null
+                    || StationAtlas.IsEndCycleCard(child)) _actions.Add(child);
                 // Clock rows by FSM class (ClockValue carrier), never by rendered
                 // or object name — the CS1 invisible-clock lesson (owner, ride V1).
                 else if (GameQueries.ClockFsm(child) != null) _clocks.Add(child);
@@ -211,18 +217,15 @@ namespace Sleeptalker.Sleeper2
                 }
             }
 
-            // Fallback: active group children of the action-group containers.
-            var candidates = new List<Transform>();
-            foreach (var t in Object.FindObjectsOfType<Transform>())
-            {
-                if (t.name != "1_Action Groups" && t.name != "Rig Action Groups") continue;
-                foreach (Transform group in t)
-                    if (group.gameObject.activeInHierarchy)
-                        candidates.Add(group);
-            }
-            if (candidates.Count == 1) { _group = candidates[0]; return _group; }
-            LogOnce("[Location] group unresolved: no Selected marker pointer, "
-                + candidates.Count + " active group(s) — capture needed");
+            // Fallback: the group the screen is DRAWING — the same test that told
+            // the mode model we are in a location at all. These two MUST agree:
+            // if the mode says location and this returns null, the table enters
+            // with no rows and speaks "Nothing here." at everything, which is the
+            // mirror image of the stranding it was meant to fix.
+            _group = StationAtlas.DrawnActionGroup();
+            if (_group != null) return _group;
+            LogOnce("[Location] group unresolved: no Selected marker pointer and "
+                + "no drawn action group — capture needed");
             return null;
         }
 
@@ -318,8 +321,24 @@ namespace Sleeptalker.Sleeper2
 
         // ---------- Action cells (rendered card anatomy, §7b) ----------
 
+        /// <summary>The card's rendered name. The End Cycle card draws its label on
+        /// its BUTTON, not in an "Action Name" element, so admitting it to this
+        /// table made the row speak the raw object name — "End Cycle Action." where
+        /// the screen says "END CYCLE" (ride 2026-08-05, my own regression). Read
+        /// the button the way the rig's End Cycle row already does; the object name
+        /// stays the last resort it always was.</summary>
         private static string ActionName(Transform card)
-            => Describe.TextUnder(card, "Action Name") ?? card.name.TrimEnd();
+        {
+            string drawn = Describe.TextUnder(card, "Action Name");
+            if (drawn != null) return drawn;
+            var button = FindDeep(card, "Dice Slot Button");
+            if (button != null && button.gameObject.activeInHierarchy)
+            {
+                string label = Describe.FirstText(button.gameObject);
+                if (!string.IsNullOrEmpty(label)) return label;
+            }
+            return card.name.TrimEnd();
+        }
 
         /// <summary>Full read on row switch (CS1 ruling): every populated facet in
         /// column order, narrative last; disabled rows carry their reason.</summary>
