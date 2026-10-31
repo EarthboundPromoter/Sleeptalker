@@ -60,6 +60,15 @@ namespace Sleeptalker.Sleeper2
 
         public static void Tick()
         {
+            // Back at the title (2026-10-25): a gate armed by the quit session must
+            // not speak a wake-up summary when the next game boots.
+            if ((_armed || _pendingController != null) && GameQueries.TitleLive())
+            {
+                _armed = false;
+                _pendingController = null;
+                _settledAt = -10f;
+                return;
+            }
             if (_pendingController == null) return;
             _pendingTicks++;
             if (!DiceFlow.AllDiceSettled() && _pendingTicks < 180) return;
@@ -75,10 +84,12 @@ namespace Sleeptalker.Sleeper2
         private static void Summarize(PlayMakerFSM controller)
         {
             var sb = new System.Text.StringBuilder(Lex.T("cycle.prefix"));
+            // Find*, not Get*: Get* creates a missing variable, so the int read
+            // could never run and an int count spoke as a made-up 0 (2026-10-25).
             var count = controller != null
-                ? controller.FsmVariables.GetFsmFloat("Cycle Count") : null;
+                ? controller.FsmVariables.FindFsmFloat("Cycle Count") : null;
             var countInt = controller != null
-                ? controller.FsmVariables.GetFsmInt("Cycle Count") : null;
+                ? controller.FsmVariables.FindFsmInt("Cycle Count") : null;
             if (count != null) sb.Append(' ').Append(count.Value.ToString("0"));
             else if (countInt != null) sb.Append(' ').Append(countInt.Value);
             sb.Append('.');
@@ -100,6 +111,14 @@ namespace Sleeptalker.Sleeper2
                     string die = DiceFlow.CrewDieLine(member, slot);
                     if (die != null) sb.Append(' ').Append(die);
                 }
+
+            // The rig's clocks (THE HUNT and its kin advance at the cycle's turn).
+            var clocks = ZoneTable.RigClockLines();
+            if (clocks.Count > 0)
+            {
+                sb.Append(' ').Append(Lex.T("cycle.clocks"));
+                foreach (var c in clocks) sb.Append(' ').Append(c);
+            }
 
             SpeechService.Say(sb.ToString(), Priority.Queued, "cycle");
         }

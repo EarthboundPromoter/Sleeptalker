@@ -715,8 +715,30 @@ namespace Sleeptalker.Sleeper2
             _pending.Add(new PendingAnnounce { Ch = ch, Key = key, Fsm = fsm });
         }
 
+        private static bool _titleReset;
+
+        /// <summary>Back at the title (2026-10-25): forget every element's last
+        /// value, so the next game's first sightings settle silently instead of
+        /// being compared with the session that was quit (a load of another save
+        /// spoke changes that never happened in it).</summary>
+        private static void TitleResetTick()
+        {
+            if (!GameQueries.TitleLive()) { _titleReset = false; return; }
+            if (_titleReset) return;
+            _titleReset = true;
+            foreach (var ch in Channels)
+            {
+                ch.LastByName.Clear();
+                ch.LiveByName.Clear();
+                ch.Settling.Clear();
+            }
+            _pending.Clear();
+            _seedRetries.Clear();
+        }
+
         public static void Tick()
         {
+            TitleResetTick();
             PayoutTick();
             SeedRetryTick();
             SettleTick();

@@ -58,6 +58,10 @@ namespace Sleeptalker.Sleeper2
         private static float _pendingSince;
         private static float _verifyAt = -1f;    // pending dismissal verification
         private static float _lastDismiss = -1f;
+        private static float _alphaAtDismiss = -1f; // panel alpha when CONTINUE was clicked
+        private static float _landingAt = -1f;      // after the player's dismissal: say where they are
+        private static float _landingMark;
+        private static GameObject _responseBefore;  // the response focused when a tutorial triggered
 
         public static void Init()
         {
@@ -104,6 +108,9 @@ namespace Sleeptalker.Sleeper2
 
             _pending = content.Value.transform;
             _pendingSince = Time.unscaledTime;
+            var focusedNow = Navigator.Current();
+            if (focusedNow != null && focusedNow.name.StartsWith("Response: "))
+                _responseBefore = focusedNow;
             // Claim the speech gate at trigger time, not adoption: the panel takes
             // frames to become visible (variant switch), and chatter that speaks in
             // that window leaks through then gets stomped mid-word by the box read
@@ -128,18 +135,19 @@ namespace Sleeptalker.Sleeper2
         /// hook releases everything unconditionally.</summary>
         public static void OnSceneChanged()
         {
-            bool claimed = _pending != null || _panel != null;
+            // ReferenceEquals: a destroyed panel compares equal to null, which hid the
+            // claim and kept the gate shut (2026-10-25). EndModal is a no-op unclaimed.
+            bool claimed = !ReferenceEquals(_pending, null) || !ReferenceEquals(_panel, null);
             _pending = null;
             _popupPending = null;
             _panel = null;
             _panelId = 0;
             _blocks.Clear();
             _verifyAt = -1f;
-            if (claimed)
-            {
-                Plugin.Log.LogInfo("[Tutorial] scene change released the modal claim");
-                SpeechService.EndModal();
-            }
+            _alphaAtDismiss = -1f;
+            _responseBefore = null;
+            if (claimed) Plugin.Log.LogInfo("[Tutorial] scene change released the modal claim");
+            SpeechService.EndModal();
         }
 
         /// <summary>The popup's readable content: every rendered TMP under it
@@ -186,6 +194,19 @@ namespace Sleeptalker.Sleeper2
 
         public static void Tick()
         {
+            // After the player closed a tutorial with Enter, say where they landed
+            // when nothing else has spoken (2026-10-25: the key went silent, as if
+            // it had not registered).
+            if (_landingAt > 0f && Time.unscaledTime >= _landingAt)
+            {
+                _landingAt = -1f;
+                if (!Active() && SpeechService.LastSpokeAt <= _landingMark)
+                {
+                    string mode = Lex.T("mode." + ModeModel.Current().ToString().ToLowerInvariant());
+                    SpeechService.Say(mode + ".", Priority.Immediate, "nav");
+                }
+            }
+
             // Popup-class toast: speak the moment it draws (render moment) —
             // one queued utterance, no modal claim, the game's own auto-
             // dismiss runs untouched.
@@ -215,7 +236,10 @@ namespace Sleeptalker.Sleeper2
 
             // Trigger-announced panel: adopt once it actually shows (the panel's own
             // FSM switches platform variants for a beat after the trigger fires).
-            if (_pending != null)
+            // ReferenceEquals (2026-10-25): a pending panel destroyed before it showed
+            // compared equal to null, so the timeout below never ran and the claim
+            // stayed. A destroyed one now falls to the timeout like a hidden one.
+            if (!ReferenceEquals(_pending, null))
             {
                 if (IsShowing(_pending))
                 {
@@ -231,9 +255,10 @@ namespace Sleeptalker.Sleeper2
                     _pending = null;
                     if (_panel == null) SpeechService.EndModal();
                 }
-                else if (Time.unscaledTime - _pendingSince > 3f)
+                else if (_pending == null || Time.unscaledTime - _pendingSince > 3f)
                 {
-                    Plugin.Log.LogWarning("[Tutorial] trigger content " + _pending.name
+                    Plugin.Log.LogWarning("[Tutorial] trigger content "
+                        + (_pending != null ? _pending.name : "(destroyed)")
                         + " never became visible — capture needed.");
                     _pending = null;
                     // The trigger-time claim must not outlive a box that never came.
@@ -243,8 +268,19 @@ namespace Sleeptalker.Sleeper2
 
             // A tracked modal that stopped showing ends cleanly: buffer cleared,
             // focus handed to whatever the modal hid.
-            if (_panel != null && !PanelVisible())
+            if (!ReferenceEquals(_panel, null) && !PanelVisible())
             {
+                EndModal();
+                return;
+            }
+
+            // Dismissal under way (2026-10-25): once CONTINUE was clicked and the
+            // panel starts to fade, the tutorial is over for the ear. Waiting for the
+            // fade to finish held every line and key answer for its whole length.
+            if (_alphaAtDismiss > 0f && _panel != null
+                && Util.AlphaUpTo(_panel, null) < _alphaAtDismiss - 0.1f)
+            {
+                Diag.Note("Tutorial", "fade started after CONTINUE — modal ended");
                 EndModal();
                 return;
             }
@@ -284,6 +320,10 @@ namespace Sleeptalker.Sleeper2
             if (id == _panelId) return;
             _panelId = id;
             _panel = panel;
+            // A chained panel starts fresh: the previous panel's dismissal check
+            // must not read this one as "still open" (2026-10-25).
+            _verifyAt = -1f;
+            _alphaAtDismiss = -1f;
 
             Build(panel);
             Table.Reset();
@@ -295,8 +335,10 @@ namespace Sleeptalker.Sleeper2
                 SpeechService.Say(block, Priority.Queued, "tutorial");
         }
 
-        public static void Move(int delta) => Table.MoveRow(delta);
-        public static void Repeat() => Table.MoveCol(0);
+        // The player's own read replaces the auto-read still waiting in the queue,
+        // so its blocks are not heard twice (2026-10-25).
+        public static void Move(int delta) { SpeechService.FlushSource("tutorial"); Table.MoveRow(delta); }
+        public static void Repeat() { SpeechService.FlushSource("tutorial"); Table.MoveCol(0); }
 
         /// <summary>Enter: always fire CONTINUE (owner ruling), wherever focus sits.
         /// Pointer-path dispatch — the f4641 capture showed the uGUI Button consuming
@@ -320,6 +362,7 @@ namespace Sleeptalker.Sleeper2
                 Navigator.Select(button.gameObject);
             Navigator.PointerClick(button.gameObject);
             _verifyAt = Time.unscaledTime + 0.6f;
+            _alphaAtDismiss = Util.AlphaUpTo(panel, null);
             return true;
         }
 
@@ -335,14 +378,36 @@ namespace Sleeptalker.Sleeper2
             _panel = null;
             _panelId = 0;
             _verifyAt = -1f;
+            _alphaAtDismiss = -1f;
             _blocks.Clear();
             Table.Reset();
+            SpeechService.FlushSource("tutorial");
+            if (Time.unscaledTime - _lastDismiss < 3f)
+            {
+                _landingAt = Time.unscaledTime + 0.4f;
+                _landingMark = SpeechService.LastSpokeAt;
+            }
+            // Release the gate BEFORE the refocus (2026-10-25): the refocus line was
+            // dropped as a volatile source while the claim still stood, so the
+            // player landed on a response in silence.
+            SpeechService.EndModal();
+            var before = _responseBefore;
+            _responseBefore = null;
 
             var cur = Navigator.Current();
             if (cur != null && Util.HasAncestor(cur, "Tutorial System"))
             {
                 var landed = false;
-                if (DialogueState.MenuOpen)
+                if (DialogueState.MenuOpen && before != null && before.activeInHierarchy)
+                {
+                    var sel = before.GetComponent<UnityEngine.UI.Selectable>();
+                    if (sel != null && sel.IsInteractable())
+                    {
+                        Navigator.Select(before);
+                        landed = true;
+                    }
+                }
+                if (!landed && DialogueState.MenuOpen)
                 {
                     foreach (var b in Object.FindObjectsOfType<UnityEngine.UI.Button>())
                     {
@@ -361,7 +426,6 @@ namespace Sleeptalker.Sleeper2
                     if (es != null) es.SetSelectedGameObject(null);
                 }
             }
-            SpeechService.EndModal();
         }
 
         /// <summary>The panel's CONTINUE: component-typed, not name-keyed.</summary>
@@ -412,7 +476,9 @@ namespace Sleeptalker.Sleeper2
             var labels = new List<string>();
             foreach (var (_, tmp) in texts)
             {
-                string filled = FillPromptGaps(tmp, tmp.text);
+                // An authored "\n" escape is a line break on screen (TMP parses it);
+                // read as text it was spoken as a backslash (2026-10-25).
+                string filled = FillPromptGaps(tmp, tmp.text.Replace("\\n", "\n"));
                 foreach (var para in Regex.Split(filled, @"\n\s*\n"))
                 {
                     bool isLabel = para.TrimStart().StartsWith("/");
@@ -500,21 +566,29 @@ namespace Sleeptalker.Sleeper2
                 string n = child.name;
                 if (n.IndexOf("prompt", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
                 if (n.IndexOf("Target", System.StringComparison.Ordinal) >= 0) continue;
+                // Layout helpers, both spellings (the Citizen Speaker finding: the
+                // correctly spelled copies counted as prompts).
                 if (n.IndexOf("postioner", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                if (n.IndexOf("positioner", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
                 prompts.Add((child.position, PromptWord(child)));
                 promptNames.Add(n);
             }
             if (prompts.Count == 0) return txt;
-            prompts.Sort((a, b) => a.pos.y != b.pos.y
-                ? b.pos.y.CompareTo(a.pos.y)
-                : a.pos.x.CompareTo(b.pos.x));
+            // Reading order with a line tolerance (2026-10-25): glyphs on one text
+            // line sit a fraction apart in y, and the exact compare read "with
+            // [DPAD] and [A]" as "with Enter and the arrow keys".
+            prompts.Sort((a, b) =>
+            {
+                int ra = Mathf.RoundToInt(a.pos.y / 10f), rb = Mathf.RoundToInt(b.pos.y / 10f);
+                return ra != rb ? rb.CompareTo(ra) : a.pos.x.CompareTo(b.pos.x);
+            });
 
             var segments = Regex.Split(txt, @"[ \t]{3,}");
             if (segments.Length == prompts.Count + 1)
             {
                 var sb = new System.Text.StringBuilder(segments[0]);
                 for (int i = 0; i < prompts.Count; i++)
-                    sb.Append(' ').Append(prompts[i].word).Append(' ').Append(segments[i + 1].TrimStart());
+                    AppendGap(sb, prompts[i].word, segments[i + 1]);
                 return sb.ToString();
             }
 
@@ -534,17 +608,41 @@ namespace Sleeptalker.Sleeper2
             {
                 var sb = new System.Text.StringBuilder(segments[0]);
                 for (int i = 0; i < unique.Count; i++)
-                    sb.Append(' ').Append(unique[i]).Append(' ').Append(segments[i + 1].TrimStart());
+                    AppendGap(sb, unique[i], segments[i + 1]);
                 return sb.ToString();
             }
             return txt + ". " + Lex.T("tutorial.shown-with") + " "
                 + string.Join(Lex.T("tutorial.and"), unique) + ".";
         }
 
+        /// <summary>One filled gap: the key word, then the text after the gap — with
+        /// no space before punctuation ("with Enter ." spoke the space, 2026-10-25).</summary>
+        private static void AppendGap(System.Text.StringBuilder sb, string word, string after)
+        {
+            sb.Append(' ').Append(word);
+            after = after.TrimStart();
+            if (after.Length > 0 && ".,;:!?".IndexOf(after[0]) < 0) sb.Append(' ');
+            sb.Append(after);
+        }
+
+        /// <summary>Glyph names match as whole words of the prompt's object name
+        /// (2026-10-25): substring matching read "LB Prompt" as the B prompt
+        /// (Backspace) and could find "LS" inside longer names. "Push" may sit
+        /// anywhere in the name.</summary>
+        private static bool NameHasGlyph(string name, string fragment)
+        {
+            if (fragment == "Push")
+                return name.IndexOf(fragment, System.StringComparison.OrdinalIgnoreCase) >= 0;
+            string glyph = fragment.EndsWith(" Prompt") ? fragment.Substring(0, fragment.Length - 7) : fragment;
+            foreach (var token in Regex.Split(name, "[^A-Za-z0-9]+"))
+                if (token.Equals(glyph, System.StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         private static string PromptWord(Transform prompt)
         {
             foreach (var (fragment, lexKey) in PromptKeys)
-                if (prompt.name.IndexOf(fragment, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                if (NameHasGlyph(prompt.name, fragment))
                     return Lex.T(lexKey);
             var tmp = prompt.GetComponentInChildren<TMP_Text>(false);
             string rendered = tmp != null ? SpeechService.Clean(tmp.text) : null;

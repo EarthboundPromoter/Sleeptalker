@@ -51,6 +51,16 @@ namespace Sleeptalker.Sleeper2
             return false;
         }
 
+        /// <summary>Navigator spoke this element itself (dead-end repeat): a focus
+        /// event for the same element and text right after it is an echo.</summary>
+        public static void NoteSpoken(GameObject go, string description)
+        {
+            if (go == null || string.IsNullOrEmpty(description)) return;
+            _lastFocusId = go.GetInstanceID();
+            _lastFocusText = description;
+            _lastFocusAt = Time.unscaledTime;
+        }
+
         /// <summary>Called by Navigator (via NavSignals) immediately before it moves or
         /// sets selection — only selection changes the mod causes count as user-initiated.</summary>
         public static void NoteUserNavigation() => _userMoveExpires = Time.unscaledTime + Timing.UserMoveWindow;
@@ -160,6 +170,14 @@ namespace Sleeptalker.Sleeper2
             // parking, not news; it must not interject in the outcome utterance).
             if (selected.name == "Gamepad Dice Slot" && ActionOutcomes.ResolutionInFlight)
                 return;
+            // The same parking on arrival at a location: the location table has
+            // just read the card, and the slot's own read was its object name
+            // ("Gamepad Dice Slot", 2026-10-25).
+            if (selected.name == "Gamepad Dice Slot" && ModeModel.Current() == Mode.ActionView)
+                return;
+            // The commit button the slotted line just named ("... START ACTION.").
+            if (selected.name == "Dice Slot Button" && Time.unscaledTime - DiceFlow.SlottedSpokeAt < 1f)
+                return;
 
             // CS1: the game re-selects Continue after every dialogue advance — never
             // informative. CS2 dialogue path is the same DS layer; carried, verify live.
@@ -199,6 +217,14 @@ namespace Sleeptalker.Sleeper2
             if (!GameQueries.MapOpen() && Util.HasAncestor(selected, "Map Screen"))
             {
                 Plugin.Log.LogInfo("[Focus] closed-map echo suppressed: " + selected.name);
+                return;
+            }
+
+            // Class swap: the game re-selects CONFIRM CLASS after each slide; the
+            // swap already spoke the class, so that landing is an echo (2026-10-25).
+            if (ClassSelect.SuppressConfirmFocus(selected))
+            {
+                Plugin.Log.LogInfo("[Focus] class-swap echo suppressed: " + selected.name);
                 return;
             }
 
@@ -265,8 +291,28 @@ namespace Sleeptalker.Sleeper2
         /// offline; any miss falls soft to the default read.</summary>
         private static string DescribeFocused(GameObject go)
         {
+            // The list tables own these screens (2026-10-30): the game's own
+            // focus landing (RISKY at open, TRAVEL TO CONTRACT) is not where the
+            // player's cursor is, and its late read talked over the table.
+            if (go != null && DifficultyTable.Active() && Util.HasAncestor(go, "Difficulty Menu"))
+                return null;
+            if (go != null && CrewSelectTable.Active() && Util.HasAncestor(go, "Crew Window"))
+                return null;
             string crew = CrewSelectRead(go);
-            return crew ?? ElementDescriber.Element(go, false);
+            if (crew != null) return crew;
+            // A station node's marker button whose nameplate is not drawn read as its
+            // object name, "Location Button" (2026-10-25). Speak the node's own name.
+            if (go.name == "Location Button" || go.name == "Character Button")
+            {
+                foreach (var node in StationAtlas.Build())
+                    if (node.Button == go && !string.IsNullOrEmpty(node.Name))
+                        return node.Name;
+                string plain = ElementDescriber.Element(go, false);
+                // Only the object name to offer: nothing worth saying.
+                if (plain == null || plain.StartsWith(go.name)) return null;
+                return plain;
+            }
+            return ElementDescriber.Element(go, false);
         }
 
         /// <summary>The crew-selection dossier read (owner ruling 2026-08-02:
@@ -311,6 +357,16 @@ namespace Sleeptalker.Sleeper2
                 if (!string.IsNullOrEmpty(label)) sb.Append(' ').Append(label).Append('.');
             }
 
+            sb.Append(CrewChips(button));
+            return sb.ToString();
+        }
+
+        /// <summary>The stress and skill chips a crew button draws, each a
+        /// leading-space sentence (" Stress 2 of 6. Intuit plus 1."); empty when
+        /// none. Shared by the focus read and the crew table (2026-10-30).</summary>
+        internal static string CrewChips(Transform button)
+        {
+            var sb = new System.Text.StringBuilder();
             // Stress from the button's OWN bar variant (same family as the
             // contract panels; caps byte-true per variant name).
             foreach (var t in button.GetComponentsInChildren<Transform>(false))
@@ -359,7 +415,7 @@ namespace Sleeptalker.Sleeper2
             return sb.ToString();
         }
 
-        private static string RenderedChildText(Transform root, string childName)
+        internal static string RenderedChildText(Transform root, string childName)
         {
             foreach (var t in root.GetComponentsInChildren<Transform>(false))
             {

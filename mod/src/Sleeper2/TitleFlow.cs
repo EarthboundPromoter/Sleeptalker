@@ -23,6 +23,30 @@ namespace Sleeptalker.Sleeper2
                 (fsm, state) => _pendingAt = Time.unscaledTime + AnnounceDefer);
         }
 
+        // The title menus' own back (2026-10-25): the MAIN MENU FSM's Back event,
+        // which the game reads from the Rewired "Back" action (right mouse and
+        // gamepad only), so keyboard players could not step back. Only the states
+        // where Back is a menu step (live transition dump: Class Select ->
+        // Difficulty Select -> New Game -> Demo Menu; Warning N -> New Game;
+        // Continue and Language -> Demo Menu), never where it means a failed load.
+        private static readonly string[] BackStates =
+        {
+            "Class Select", "Difficulty Select", "New Game", "Continue",
+            "Warning 1", "Warning 2", "Warning 3", "Language",
+        };
+
+        public static bool Back()
+        {
+            var menu = GameQueries.FindFsm("MAIN MENU");
+            if (menu == null) return false;
+            if (System.Array.IndexOf(BackStates, menu.ActiveStateName) < 0) return false;
+            // The menu it lands on selects its first button inside the event: that
+            // landing is the answer to this key, so it speaks.
+            FocusPatch.NoteUserNavigation();
+            menu.SendEvent("Back");
+            return true;
+        }
+
         public static void Tick()
         {
             if (_pendingAt < 0 || Time.unscaledTime < _pendingAt) return;

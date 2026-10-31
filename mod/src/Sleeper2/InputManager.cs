@@ -29,10 +29,33 @@ namespace Sleeptalker.Sleeper2
             if (!Input.anyKeyDown) return;
             if (!IsModKeyDown()) return;
 
+            // The credits screen owns its few keys (2026-10-25).
+            if (CreditsWatch.HandleKeys()) return;
+
             // Any mod key: the scene is settled (boot-sweep silence ends) and the
             // UI must be in gamepad mode for the keyboard flow to work.
             FocusPatch.MarkSettled();
             GameQueries.EnsureGamepadMode();
+
+            // Engine splash (2026-10-27, CS1 parity): the logo crawl before the title
+            // owns the screen for several seconds and cannot be skipped. Nothing is
+            // selectable, so a key there said "Nothing to focus." (or nothing in the
+            // first 8 s), as if the game had hung. Say it is still loading instead;
+            // F1, Z and F3 keep working. The key that launched the game can land in
+            // the first frames: that one stays silent.
+            if (GameQueries.SplashPlaying() && !Input.GetKeyDown(KeyCode.F1)
+                && !Input.GetKeyDown(KeyCode.Z) && !Input.GetKeyDown(KeyCode.F3))
+            {
+                if (Time.frameCount > Timing.LaunchKeyFrames)
+                    SpeechService.Say("Loading, please wait.", Priority.Immediate, "nav");
+                return;
+            }
+
+            // An advancing key in a live conversation: the next line answers it
+            // (spoken at once instead of queued behind the old line, 2026-10-25).
+            if (ConversationEvents.ConversationActive && !DialogueColumn.InHistory
+                && !TutorialReader.Active() && IsAdvanceKey())
+                DialogueState.NoteAdvance();
 
             // The F1 key sheet owns the table grammar while open (owner
             // design 2026-08-03); a foreign key retires it silently and
@@ -57,6 +80,32 @@ namespace Sleeptalker.Sleeper2
                 if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     && TutorialReader.Dismiss())
                     return;
+            }
+
+            // Conversation focus anchor (ride 2026-10-30): a conversation that
+            // opens over the Drive Log leaves the game's selection on the log, so
+            // arrows walked quest buttons and Enter did nothing. An arrow or Enter
+            // whose selection sits outside the dialogue UI lands on what the
+            // conversation waits on instead: one press = the anchor (the pause
+            // idiom), except Enter on a lone CONTINUE, which is the advance the
+            // player meant. A response menu never picks on the anchoring press.
+            if (ConversationEvents.ConversationActive && !TutorialReader.Active()
+                && !DialogueColumn.InHistory && ModeModel.Current() == Mode.Conversation)
+            {
+                bool enterKey = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+                bool arrowKey = Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.DownArrow)
+                    || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow);
+                if (enterKey || arrowKey)
+                {
+                    var anchor = DialogueAnchor.Needed();
+                    if (anchor != null)
+                    {
+                        Plugin.Log.LogInfo("[Dialogue] selection outside the dialogue — anchoring on " + anchor.name);
+                        Navigator.Select(anchor);
+                        if (enterKey && !DialogueState.MenuOpen) Navigator.ActivateCurrent();
+                        return;
+                    }
+                }
             }
 
             // Unified dialogue column (owner design 2026-08-01, D19): Up from
@@ -97,6 +146,10 @@ namespace Sleeptalker.Sleeper2
             // Class select (owner design): Up/Down walk the class card rows with a
             // confirm-button handoff at the end; Left/Right drive the carousel FSM's
             // own swap events; Enter inside the table jumps to confirm first.
+            // Difficulty screen (2026-10-30): a fixed list — tutorials, the three
+            // difficulties, confirm, back — instead of the spatial walk.
+            if (DifficultyTable.HandleKeys()) return;
+
             if (ClassSelect.Active())
             {
                 if (Input.GetKeyDown(KeyCode.LeftArrow)) { ClassSelect.Swap(-1); return; }
@@ -149,8 +202,11 @@ namespace Sleeptalker.Sleeper2
                 // J joins the inventory swap set (owner ruling 2026-08-02,
                 // ride finding: the drives screen was unreachable from browse).
                 var mode = SwapOutOfInventory(ModeModel.Current());
+                // A Drive Log left open under a conversation closes with J too
+                // (ride 2026-10-30: it held the keyboard and J did nothing).
                 if (mode == Mode.DriveLog || mode == Mode.Station
-                    || mode == Mode.RigRooms || mode == Mode.ActionView)
+                    || mode == Mode.RigRooms || mode == Mode.ActionView
+                    || (mode == Mode.Conversation && DialogueAnchor.DriveLogOpen()))
                 { JournalTable.Toggle(); return; }
             }
             if (ModeModel.Current() == Mode.DriveLog && JournalTable.HandleKeys()) return;
@@ -171,7 +227,18 @@ namespace Sleeptalker.Sleeper2
             // (spec: before native fallthrough). Native forced-focus sub-windows
             // (Travel Confirm, Crew, Leave Contract, blockers) stand it down via
             // the Active gate — their focus reads carry them (D8).
+            // Crew selection window (2026-10-30): a fixed-order table instead of
+            // the game's spatial walk, which skipped and stranded crew rows.
+            if (CrewSelectTable.HandleKeys()) return;
             if (MapTable.Active() && MapTable.HandleKeys()) return;
+            if ((Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)
+                 || Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.DownArrow)
+                 || Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
+                && MapTable.TravelKeyGuard())
+            {
+                SpeechService.Say(Lex.T("map.travelling"), Priority.Immediate, "nav");
+                return;
+            }
 
             // Character window: the skills + push table owns the keys; the
             // shared Upgrade Confirm Window stands it down (native focus).
@@ -236,6 +303,10 @@ namespace Sleeptalker.Sleeper2
                 // the V-row commit exits the table before arming, so the
                 // second press needs this rung; P remains the twin).
                 if (PushFlow.ModArmed()) { PushFlow.Key(); return; }
+                // The title's press-start gate after a quit has no selection: the
+                // game takes this Enter itself, so "Nothing focused." was a false
+                // alarm right before the menu spoke (2026-10-25).
+                if (Navigator.Current() == null && ModeModel.Current() == Mode.Title) return;
                 Navigator.ActivateCurrent();
                 return;
             }
@@ -268,6 +339,11 @@ namespace Sleeptalker.Sleeper2
             if (PushFlow.CancelArm()) return;
             switch (ModeModel.Current())
             {
+                case Mode.Title:
+                    if (TitleFlow.Back()) return;
+                    SpeechService.Say(Lex.T("title.no-back"), Priority.Immediate, "nav");
+                    return;
+
                 case Mode.Pause:
                     // The pause menu's own Back/Esc machinery is native.
                     Plugin.Log.LogInfo("[Input] Backspace under pause: Esc path is native");
@@ -340,6 +416,14 @@ namespace Sleeptalker.Sleeper2
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4, KeyCode.Alpha5,
             KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
         };
+
+        private static bool IsAdvanceKey()
+        {
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) return true;
+            for (int i = 0; i < 9; i++)
+                if (Input.GetKeyDown(KeyCode.Alpha1 + i)) return true;
+            return false;
+        }
 
         private static bool IsModKeyDown()
         {

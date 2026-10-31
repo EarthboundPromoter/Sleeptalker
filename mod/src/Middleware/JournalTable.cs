@@ -67,15 +67,17 @@ namespace Sleeptalker.Middleware
         // ---------- Open truth (the framework window component, D5) ----------
 
         private static QuestLogWindow _window;
-        private static bool _windowChecked;
+        private static float _windowSearchAt = -10f;
 
+        /// <summary>The search walks every loaded object, so without a window (title,
+        /// loading) it is retried once a second, not every frame (2026-10-25).</summary>
         public static bool WindowOpen()
         {
-            if (!_windowChecked || _window == null)
+            if (_window == null && Time.unscaledTime - _windowSearchAt >= 1f)
             {
+                _windowSearchAt = Time.unscaledTime;
                 foreach (var w in Resources.FindObjectsOfTypeAll<QuestLogWindow>())
                     if (w != null && w.gameObject.scene.IsValid()) { _window = w; break; }
-                _windowChecked = true;
             }
             return _window != null && _window.isOpen;
         }
@@ -83,7 +85,8 @@ namespace Sleeptalker.Middleware
         public static void InvalidateScene()
         {
             _window = null;
-            _windowChecked = false;
+            _windowSearchAt = -10f;
+            _driveLogButton = null;
         }
 
         private static bool ShowingActive
@@ -91,16 +94,23 @@ namespace Sleeptalker.Middleware
 
         /// <summary>J / Backspace: the Drive Log Button FSM's own Open event —
         /// works both directions (CS1 finding; D5 confirms Idle/Open/Close).</summary>
+        private static PlayMakerFSM _driveLogButton;
+
         public static void Toggle()
         {
-            foreach (var fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
+            if (_driveLogButton == null || !_driveLogButton.gameObject.scene.IsValid())
             {
-                if (fsm == null || fsm.gameObject == null) continue;
-                if (!fsm.gameObject.scene.IsValid()) continue;
-                if (fsm.gameObject.name != "Drive Log Button") continue;
-                fsm.SendEvent("Open");
-                return;
+                _driveLogButton = null;
+                foreach (var fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
+                {
+                    if (fsm == null || fsm.gameObject == null) continue;
+                    if (!fsm.gameObject.scene.IsValid()) continue;
+                    if (fsm.gameObject.name != "Drive Log Button") continue;
+                    _driveLogButton = fsm;
+                    break;
+                }
             }
+            if (_driveLogButton != null) { _driveLogButton.SendEvent("Open"); return; }
             Plugin.Log.LogWarning("[Journal] Drive Log Button FSM not found");
         }
 
@@ -117,9 +127,10 @@ namespace Sleeptalker.Middleware
                     var label = tab.GetComponentInChildren<TMPro.TMP_Text>(false);
                     string name = label != null ? SpeechService.Clean(label.text) : null;
                     Navigator.Click(tab.gameObject);
-                    T.Reset();
+                    // Row level: the first arrow reads the first drive (2026-10-25).
+                    T.Reset(-1);
                     if (!string.IsNullOrEmpty(name))
-                        SpeechService.Say(name + ".", Priority.Queued, "journal");
+                        SpeechService.Say(name + ".", Priority.Immediate, "journal");
                     else
                         Plugin.Log.LogWarning("[Journal] tab has no rendered label — swap silent");
                     return true;
@@ -132,8 +143,28 @@ namespace Sleeptalker.Middleware
 
         public static void OnWindowClosed()
         {
-            T.Reset();
+            T.Reset(-1);
             _confirmQuest = null;
+            _pendingTrackQuest = null;
+            _announceTrackingAt = -1f;
+            SpeechService.Say(Lex.T("journal.closed"), Priority.Immediate, "journal");
+        }
+
+        /// <summary>Open (2026-10-25): it used to be silent and parked the cursor on
+        /// the first drive unread, so the first Down skipped it. Now it names the
+        /// window and its tab, and the first arrow reads the first drive.</summary>
+        public static void OnWindowOpened()
+        {
+            T.Reset(-1);
+            _confirmQuest = null;
+            string tab = null;
+            var tabButton = FindByName(ShowingActive ? "Active Button" : "Completed Button");
+            var label = tabButton != null ? tabButton.GetComponentInChildren<TMP_Text>(false) : null;
+            if (label != null) tab = SpeechService.Clean(label.text);
+            int n = Rows().Count;
+            SpeechService.Say(Lex.T("journal.open") + (tab != null ? " " + tab + "." : "")
+                + " " + (n == 0 ? Lex.T("journal.empty") : n + (n == 1 ? Lex.T("journal.count-one") : Lex.T("journal.count"))),
+                Priority.Immediate, "journal");
         }
 
         // ---------- Rows (stateless — the QuestLog is the truth every press) ----------
@@ -270,7 +301,9 @@ namespace Sleeptalker.Middleware
                 return;
             }
             Navigator.Click(toggle.gameObject);
-            _announceTrackingAt = Time.unscaledTime + 0.25f;
+            // The click sets tracking synchronously (QuestLogWindow), so the result
+            // is read on the next tick instead of a quarter second later.
+            _announceTrackingAt = Time.unscaledTime;
         }
 
         private static float _announceTrackingAt = -1f;
@@ -283,6 +316,7 @@ namespace Sleeptalker.Middleware
         {
             bool open = WindowOpen();
             if (_wasOpen && !open) OnWindowClosed();
+            else if (!_wasOpen && open) OnWindowOpened();
             _wasOpen = open;
 
             if (_pendingTrackQuest != null && Time.unscaledTime >= _pendingTrackAt)
@@ -293,7 +327,7 @@ namespace Sleeptalker.Middleware
                 if (toggle != null)
                 {
                     Navigator.Click(toggle.gameObject);
-                    _announceTrackingAt = Time.unscaledTime + 0.25f;
+                    _announceTrackingAt = Time.unscaledTime;
                 }
                 else
                     SpeechService.Say(Lex.T("journal.track-unavailable"),
@@ -339,11 +373,17 @@ namespace Sleeptalker.Middleware
                 return;
             }
             _confirmQuest = null;
-            var heading = FindHeadingButton(quest);
-            if (heading != null) Navigator.Click(heading.gameObject);
-            var abandonBtn = FindWindowButton("ABANDON");
+            // The row is already expanded (arrival expands it); clicking its heading
+            // again closed it and hid ABANDON, so the confirm did nothing
+            // (2026-10-25). Make sure it is open, then press its own ABANDON.
+            EnsureExpanded(quest);
+            var abandonBtn = FindRowActionButton(quest, "ABANDON") ?? FindWindowButton("ABANDON");
             if (abandonBtn != null) Navigator.Click(abandonBtn.gameObject);
-            else Plugin.Log.LogInfo("[Journal] abandon button not found — silent.");
+            else
+            {
+                Plugin.Log.LogInfo("[Journal] abandon button not found.");
+                SpeechService.Say(Lex.T("journal.abandon-unavailable"), Priority.Immediate, "journal");
+            }
         }
 
         // ---------- Native-object resolution (rendered labels, graceful silence) ----------

@@ -28,5 +28,9 @@ namespace Sleeptalker.Scaffold
 
         /// <summary>Fired before user-initiated selection so it always announces.</summary>
         public static Action<GameObject> ClearCooldown = go => { };
+
+        /// <summary>Fired after Navigator speaks an element itself (the dead-end
+        /// repeat), so the focus layer's identical-announce window counts it.</summary>
+        public static Action<GameObject, string> SpokeElement = (go, text) => { };
     }
 }

@@ -78,9 +78,15 @@ namespace Sleeptalker.Scaffold
 
             // Dead end (or sole focusable element): repeat the element bare — the repeat
             // itself is the dead-end signal, and an arrow press must never be silent.
+            // The game can re-select the same element later in this frame (the title
+            // gate's Reselect on the switch to gamepad mode spoke it twice,
+            // 2026-10-27), so the focus layer is told what was said.
             if (es.currentSelectedGameObject == current)
-                SpeechService.Say(ElementDescriber.Element(current, false),
-                    Priority.Immediate, "focus");
+            {
+                string repeat = ElementDescriber.Element(current, false);
+                SpeechService.Say(repeat, Priority.Immediate, "focus");
+                NavSignals.SpokeElement(current, repeat);
+            }
         }
 
         // Activation echo (live finding, CS2 first ride): an in-place toggle changes

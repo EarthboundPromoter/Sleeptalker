@@ -22,6 +22,40 @@ namespace Sleeptalker.Middleware
         /// <summary>Incremented per subtitle so the watcher can announce a sole Continue option.</summary>
         public static long SubtitleSeq;
 
+        // ---------- Player advance (2026-10-25) ----------
+        // A line the player asked for (Enter on Continue, a choice by Enter or
+        // number) is the answer to their key: it interrupts the line still being
+        // read instead of queueing behind it, which made advancing feel slow.
+        // Lines that follow on their own keep queueing.
+
+        private static float _advanceAt = -10f;
+        private static bool _advancePending;
+        private const float AdvanceWindow = 2f;
+
+        /// <summary>InputManager: the player pressed an advancing key in a conversation.</summary>
+        public static void NoteAdvance()
+        {
+            _advanceAt = UnityEngine.Time.unscaledTime;
+            _advancePending = true;
+        }
+
+        /// <summary>True once for the first line after an advancing key press.</summary>
+        public static bool TakeAdvance()
+        {
+            if (!_advancePending) return false;
+            _advancePending = false;
+            return UnityEngine.Time.unscaledTime - _advanceAt < AdvanceWindow;
+        }
+
+        /// <summary>Conversation start/end: no menu is open across a boundary
+        /// (2026-10-25: a choice that ended the conversation left MenuOpen set, and
+        /// the response remap kept turning Up/Down into Left/Right at the station).</summary>
+        public static void ClearMenu()
+        {
+            MenuOpen = false;
+            CurrentResponses.Clear();
+        }
+
         /// <summary>Per-conversation subtitle history (speaker, line) for the B
         /// dialogue-log review's attribution backfill (owner design 2026-07-23):
         /// the rendered log blocks are bare text — the mod remembers who spoke each
@@ -60,8 +94,15 @@ namespace Sleeptalker.Middleware
             bool sayName = named && !speaker.Equals(DialogueState.LastAnnouncedSpeaker,
                 System.StringComparison.OrdinalIgnoreCase);
             if (sayName) DialogueState.LastAnnouncedSpeaker = speaker;
+            bool answersKey = DialogueState.TakeAdvance();
+            if (answersKey)
+            {
+                // What was still waiting belonged to the line the player moved past.
+                SpeechService.FlushSource("dialogue");
+                SpeechService.FlushSource("choices");
+            }
             SpeechService.Say(sayName ? speaker + ": " + text : text,
-                Priority.Queued, "dialogue");
+                answersKey ? Priority.Immediate : Priority.Queued, "dialogue");
         }
 
         public static void OnResponses(Response[] responses)

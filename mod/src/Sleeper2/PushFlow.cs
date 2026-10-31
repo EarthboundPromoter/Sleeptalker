@@ -153,6 +153,7 @@ namespace Sleeptalker.Sleeper2
                 // sends; the FSM raises the panel and (gamepad dial) the
                 // confirm prompt — the state-entry hook speaks the box.
                 _modArmed = true;
+                _armedAt = Time.unscaledTime;
                 fsm.SendEvent("Mouseover");
                 return;
             }
@@ -160,6 +161,13 @@ namespace Sleeptalker.Sleeper2
             {
                 // Press 2 = the confirm stage's own fire transition.
                 fsm.SendEvent("Push");
+                return;
+            }
+            // A second press while the confirm stage is still rising (2026-10-25):
+            // the in-between state is not a refusal, so no false "not available".
+            if (_modArmed && Time.unscaledTime - _armedAt < 0.8f)
+            {
+                Plugin.Log.LogInfo("[Push] press during the arm transition ('" + state + "') — ignored");
                 return;
             }
             SayDeadReason(state);
@@ -180,9 +188,13 @@ namespace Sleeptalker.Sleeper2
         /// listens for). Only for arms WE initiated (sync pass MED-4: a
         /// native mouse hover holds the same states — Backspace must not be
         /// stolen from the mode ladder for someone else's pointer).</summary>
+        private static float _armedAt = -10f;
+
         public static bool CancelArm()
         {
             if (!ModArmed()) return false;
+            // A fresh arm right after the cancel speaks its box again (2026-10-25).
+            _confirmSpokeAt = -10f;
             SystemFsm().SendEvent("Mouseoff");
             return true;
         }
@@ -215,7 +227,8 @@ namespace Sleeptalker.Sleeper2
                     key = "push.unavailable";
                     break;
             }
-            SpeechService.Say(Lex.T(key), Priority.Queued, "push");
+            // The answer to the player's P: at once, not behind other speech (2026-10-25).
+            SpeechService.Say(Lex.T(key), Priority.Immediate, "push");
         }
 
         private static bool AtHub()
@@ -269,7 +282,7 @@ namespace Sleeptalker.Sleeper2
                 Plugin.Log.LogWarning("[Push] confirm stage renders no readable text");
                 sb.Append(Lex.T("push.confirm-bare"));
             }
-            SpeechService.Say(sb.ToString(), Priority.Queued, "push");
+            SpeechService.Say(sb.ToString(), Priority.Immediate, "push");
         }
 
         private static Transform ActivePanel(PlayMakerFSM fsm)

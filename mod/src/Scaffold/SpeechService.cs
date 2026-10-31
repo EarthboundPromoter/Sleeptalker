@@ -30,6 +30,7 @@ namespace Sleeptalker.Scaffold
         private static readonly Queue<Pending> Queue = new Queue<Pending>();
         private static readonly List<string> History = new List<string>();
         private static string _lastQueued;
+        private static float _lastQueuedAt;
         private static float _lastSpokeAt;
 
         private static readonly Regex TagPattern = new Regex("<[^>]{1,64}?>", RegexOptions.Compiled);
@@ -112,7 +113,12 @@ namespace Sleeptalker.Scaffold
             // everything else is held latest-per-source and uttered after release.
             // Durable is the DEFAULT so an unregistered future watcher can never be
             // silently lost — the worst default failure is a redundant line.
-            if (_modalSource != null && source != _modalSource)
+            // A key's own answer is not held (2026-10-25): an Immediate line within a
+            // moment of a key press is the reply to that press (F1 help, a refusal),
+            // and holding it left the key silent until the tutorial closed.
+            bool answersKey = priority == Priority.Immediate
+                && Time.unscaledTime - Diag.LastKeyAt < 1f;
+            if (_modalSource != null && source != _modalSource && !answersKey)
             {
                 if (!VolatileSources.Contains(source))
                     PenKeepLatest(new Pending { Text = text, Source = source });
@@ -127,7 +133,11 @@ namespace Sleeptalker.Scaffold
             }
             else
             {
-                if (text == _lastQueued) return;
+                // Duplicate guard: the same line already waiting, or queued a moment
+                // ago. It used to be "ever the last queued line", which silenced a
+                // genuine repeat (a second press of P: no second "Push used this
+                // cycle."; two identical dialogue lines in a row) (2026-10-25).
+                if (text == _lastQueued && Time.unscaledTime - _lastQueuedAt < 1f) return;
                 foreach (var p in Queue)
                     if (p.Text == text) return;
                 if (Queue.Count >= 20)
@@ -136,6 +146,7 @@ namespace Sleeptalker.Scaffold
                     return;
                 }
                 _lastQueued = text;
+                _lastQueuedAt = Time.unscaledTime;
                 Queue.Enqueue(new Pending { Text = text, Source = source });
                 Plugin.Log.LogInfo($"[Speech:{source}] [{Diag.ModeNow()} {Diag.Stamp()}] (queued) {text}");
             }
@@ -143,6 +154,9 @@ namespace Sleeptalker.Scaffold
 
         /// <summary>Pending queued announcements (Diag state reads).</summary>
         public static int QueueDepth => Queue.Count;
+
+        /// <summary>When the last line was handed to the screen reader.</summary>
+        public static float LastSpokeAt => _lastSpokeAt;
 
         /// <summary>Tail of the spoken history, oldest first (Diag incident dump / /modstate).</summary>
         public static List<string> RecentHistory(int max)
@@ -264,6 +278,9 @@ namespace Sleeptalker.Scaffold
             if (string.IsNullOrEmpty(text)) return null;
             text = text.Replace('�', '\'');
             text = TagPattern.Replace(text, " ");
+            // An authored "\n" escape is a line break on screen, never a backslash
+            // to read out (2026-10-25: "W and S .\nRotate the view").
+            text = text.Replace("\\n", " ");
             text = text.Replace('\n', ' ').Replace('\r', ' ').Replace('\t', ' ');
             text = StutterPattern.Replace(text, StutterEvaluator);
             text = SpacePattern.Replace(text, " ").Trim();

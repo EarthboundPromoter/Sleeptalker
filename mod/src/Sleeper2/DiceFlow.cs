@@ -22,6 +22,11 @@ namespace Sleeptalker.Sleeper2
     {
         private static float _pickerSpokeAt = -10f;
 
+        /// <summary>When the slotted line (which ends with the commit button's own
+        /// label) was spoken: the game's focus landing on that button right after
+        /// is an echo (FocusPatch).</summary>
+        public static float SlottedSpokeAt = -10f;
+
         public static void Init()
         {
             // Picker opened: any of the three systems entering Active. All three
@@ -32,7 +37,14 @@ namespace Sleeptalker.Sleeper2
                 if (!IsDiceSystem(fsm)) return;
                 if (Time.unscaledTime - _pickerSpokeAt < 0.5f) return;
                 _pickerSpokeAt = Time.unscaledTime;
-                SpeechService.Say(Lex.T("dice.picker"), Priority.Queued, "dice");
+                // Key answers are Immediate (2026-10-25): queued, they waited behind
+                // whatever was still being read.
+                // A picker with every die spent has nothing to choose: say so
+                // up front (2026-10-27, CS1 parity) instead of making the player
+                // walk the spent cursors to find out.
+                string line = Lex.T("dice.picker");
+                if (NoUsableDice()) line += " " + Lex.T("dice.none-left");
+                SpeechService.Say(line, Priority.Immediate, "dice");
             });
 
             // Designed cancel-out: the Reselector is the system's exit state.
@@ -41,7 +53,7 @@ namespace Sleeptalker.Sleeper2
                 if (!IsDiceSystem(fsm)) return;
                 if (Time.unscaledTime - _closedSpokeAt < 0.5f) return;
                 _closedSpokeAt = Time.unscaledTime;
-                SpeechService.Say(Lex.T("dice.picker-closed"), Priority.Queued, "dice");
+                SpeechService.Say(Lex.T("dice.picker-closed"), Priority.Immediate, "dice");
             });
 
             // Cursor refusal: Used Animation is the rendered no (spent or broken
@@ -49,7 +61,7 @@ namespace Sleeptalker.Sleeper2
             FsmSignals.Subscribe(null, "Used Animation", (fsm, s) =>
             {
                 if (fsm == null || !fsm.gameObject.name.StartsWith("Dice Cursor")) return;
-                SpeechService.Say(Lex.T("dice.refused"), Priority.Queued, "dice");
+                SpeechService.Say(Lex.T("dice.refused"), Priority.Immediate, "dice");
             });
 
             // Die resting: the card's controller reaches Slotted — the state ALL
@@ -91,7 +103,8 @@ namespace Sleeptalker.Sleeper2
                 // ever precedes the slot announce.
                 SpeechService.FlushSource("dice");
                 _returns.Clear();
-                SpeechService.Say(sb.ToString(), Priority.Queued, "dice");
+                SpeechService.Say(sb.ToString(), Priority.Immediate, "dice");
+                SlottedSpokeAt = Time.unscaledTime;
             });
 
             // Retraction / bounce: the controller's Unslot Dice covers the Back
@@ -277,6 +290,43 @@ namespace Sleeptalker.Sleeper2
             string health = HealthSuffix(dieFsm.transform, state == "Broken");
             if (health != null) sb.Append(' ').Append(health);
             return sb.ToString();
+        }
+
+        /// <summary>True when the tray (and any rendered crew panel) holds dice
+        /// and every one is spent or broken; false when nothing reads.</summary>
+        public static bool NoUsableDice()
+        {
+            int seen = 0;
+            for (int n = 1; n <= 5; n++)
+            {
+                int u = UsableAt("Letterbox Canvas/Top UI/Dice UI/Dice Slot " + n + "/Die");
+                if (u > 0) return false;
+                if (u == 0) seen++;
+            }
+            for (int m = 1; m <= 2; m++)
+            {
+                if (CrewPanel.PanelOf(m) == null) continue;
+                for (int s = 1; s <= 2; s++)
+                {
+                    int u = UsableAt("Letterbox Canvas/Crew UI/Crew Member " + m
+                        + "/Display/Crew Dice/Crew - Dice Slot " + s + "/Die");
+                    if (u > 0) return false;
+                    if (u == 0) seen++;
+                }
+            }
+            return seen > 0;
+        }
+
+        /// <summary>1 usable, 0 spent or broken, -1 absent (not rendered).</summary>
+        private static int UsableAt(string path)
+        {
+            var go = GameObject.Find(path);
+            if (go == null || !go.activeInHierarchy) return -1;
+            var fsm = go.GetComponent<PlayMakerFSM>();
+            if (fsm == null) return -1;
+            string state = fsm.ActiveStateName ?? "";
+            if (state == "Used" || state == "Broken") return 0;
+            return RenderedFace(go) == "-" ? 0 : 1;
         }
 
         /// <summary>Tray die read by slot number — shared by the top-bar table and
@@ -531,6 +581,12 @@ namespace Sleeptalker.Sleeper2
                 {
                     if (!Util.RenderedUp(tmp.transform)) continue;
                     string text = SpeechService.Clean(tmp.text);
+                    // A player die's container just says "DICE SLOTTED": the slot
+                    // status the line already opens with, not a crew verdict
+                    // (2026-10-25: "Die slotted. ... DICE SLOTTED.").
+                    if (!string.IsNullOrEmpty(text)
+                        && text.Equals("DICE SLOTTED", System.StringComparison.OrdinalIgnoreCase))
+                        continue;
                     if (!string.IsNullOrEmpty(text))
                         return TranscodeVerdict(text, t.name);
                 }

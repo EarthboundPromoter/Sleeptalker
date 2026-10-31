@@ -62,6 +62,7 @@ namespace Sleeptalker
             ElementDescriber.Element = Describe.Element;
             NavSignals.UserNavigated = FocusPatch.NoteUserNavigation;
             NavSignals.ClearCooldown = FocusPatch.ClearCooldown;
+            NavSignals.SpokeElement = FocusPatch.NoteSpoken;
             // The real ModeModel (2026-07-31) — the 3-value stub is retired.
             Diag.ModeNameProvider = ModeModel.Name;
             Diag.StateProvider = DiagState;
@@ -87,6 +88,9 @@ namespace Sleeptalker
                 JournalTable.InvalidateScene();
                 TutorialReader.OnSceneChanged();
                 StationCensus.OnSceneChanged();
+                NotificationWatch.OnSceneChanged();
+                WarningWatch.OnSceneChanged();
+                ItemWatch.OnSceneChanged();
             };
 
             _input = new InputManager();
@@ -124,6 +128,7 @@ namespace Sleeptalker
             DiceFlow.Tick();
             CharacterTable.Tick();
             GuideReader.Tick();
+            OptionsReview.Tick();
             LocationTable.Tick();
             TopBarTable.Tick();
             ActionOutcomes.Tick();
@@ -131,6 +136,13 @@ namespace Sleeptalker
             Vitals.Tick();
             CycleGate.Tick();
             StationCensus.Tick();
+            NotificationWatch.Tick();
+            WarningWatch.Tick();
+            ArrivalWatch.Tick();
+            CreditsWatch.Tick();
+            CrewSelectTable.Tick();
+            DifficultyTable.Tick();
+            ItemWatch.Tick();
             JournalTable.Tick();
             DialogueColumn.Tick();
             Navigator.Tick();

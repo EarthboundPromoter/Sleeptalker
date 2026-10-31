@@ -95,6 +95,7 @@ namespace Sleeptalker.Scaffold
         {
             KeyCode.F1, KeyCode.F3, KeyCode.Z, KeyCode.C, KeyCode.V, KeyCode.K, KeyCode.L,
             KeyCode.R, KeyCode.T, KeyCode.I, KeyCode.U, KeyCode.J, KeyCode.O,
+            KeyCode.M, KeyCode.G, KeyCode.P, KeyCode.N,
             KeyCode.Space, KeyCode.Slash, KeyCode.Backspace, KeyCode.Escape,
             KeyCode.Return, KeyCode.KeypadEnter,
             KeyCode.UpArrow, KeyCode.DownArrow, KeyCode.LeftArrow, KeyCode.RightArrow,
@@ -104,9 +105,14 @@ namespace Sleeptalker.Scaffold
 
         /// <summary>Ring every mod-relevant key the moment it goes down, before any
         /// dispatch decision — so a swallowed or misrouted key still leaves a trace.</summary>
+        /// <summary>When the player last pressed any key (unscaled time). SpeechService
+        /// lets an Immediate line this close to a key through a modal claim.</summary>
+        public static float LastKeyAt = -10f;
+
         public static void CaptureKeys(bool shift)
         {
             if (!Input.anyKeyDown) return;
+            LastKeyAt = Time.unscaledTime;
             foreach (var key in TrackedKeys)
                 if (Input.GetKeyDown(key))
                     Note("Input", (shift ? "Shift+" : "") + key);

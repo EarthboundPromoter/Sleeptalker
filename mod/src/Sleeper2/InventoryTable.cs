@@ -82,6 +82,10 @@ namespace Sleeptalker.Sleeper2
             var rows = Rows();
             if (rows.Count == 0) { Say(Lex.T("inv.empty")); return; }
             int target = Mathf.Clamp(_cursor + delta, 0, rows.Count - 1);
+            // At an end the cursor is already selected, so a fresh arrival finds
+            // the tooltip gone and loses the description: keep the snapshot
+            // taken when the row was reached (2026-10-25).
+            if (target == _cursor && _snapRow == target) { Say(RowRead(target)); return; }
             _cursor = target;
             ArriveRow(target);
             Say(RowRead(target));
@@ -104,7 +108,8 @@ namespace Sleeptalker.Sleeper2
                 // Cooldown beat, sync pass F6) and takes the tooltip snapshot
                 // the announce speaks from.
                 ArriveRow(_cursor);
-                Say(Lex.T("inv.title") + " " + RowRead(_cursor), Priority.Queued);
+                // The answer to the player's I: at once (2026-10-25).
+                Say(Lex.T("inv.title") + " " + RowRead(_cursor));
             }
             else if (!browse && _entered)
             {
@@ -113,11 +118,10 @@ namespace Sleeptalker.Sleeper2
                 _cursor = 0;
                 _snapRow = -1;
                 _snapName = _snapDesc = null;
-                // QUEUED, never Immediate (ride finding 2026-08-02: on a U swap
-                // the character window's own open announce is already in the
-                // queue — an Immediate close line flushed it; utterances queue
-                // one after another, owner law).
-                Say(Lex.T("inv.closed"), Priority.Queued);
+                // Immediate (2026-10-25): an Immediate line interrupts only what is
+                // being read and leaves the queue alone, and on a U swap the
+                // character window's own open announce now comes after this one.
+                Say(Lex.T("inv.closed"));
             }
         }
 

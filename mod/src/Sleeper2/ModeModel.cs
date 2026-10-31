@@ -101,6 +101,15 @@ namespace Sleeptalker.Sleeper2
         public static bool ActionViewUp()
         {
             if (StationAtlas.DrawnActionGroup() != null) return true;
+            // The game's own "you are inside" sign (ride 2026-10-30): a location
+            // card that ends the cycle (END CYCLE in the Darkside hideout) wakes
+            // the player INSIDE that location. The Cycle Controller stores it as
+            // Home Actions, hides it with the Leave Button for the cycle, and its
+            // "Actions On + Save on next leave" state switches both back on, but
+            // leaves Action View? false. The Leave Button lives only while a
+            // location is open, so it is the answer; Backspace then presses it
+            // and the game closes the location its own way (CloseAction).
+            if (GameQueries.LeaveButtonLive()) return true;
             // Find*, never Get* for existence (S9 law).
             var v = HutongGames.PlayMaker.FsmVariables.GlobalVariables
                 .FindFsmBool("Action View?");

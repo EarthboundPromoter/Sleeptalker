@@ -97,7 +97,9 @@ namespace Sleeptalker.Sleeper2
         {
             if (_entered) return;
             _entered = true;
-            Table.Reset();
+            // Row level: the first arrow reads the first row (2026-10-25: it
+            // started on row 0 unread, so the first Down skipped it).
+            Table.Reset(-1);
             _announcePending = true;
             _announceArmedAt = Time.unscaledTime;
         }
@@ -128,7 +130,7 @@ namespace Sleeptalker.Sleeper2
             SpeechService.Say(
                 Lex.T("char.menu")
                     + (points.Length > 0 ? ", " + points : "") + ".",
-                Priority.Queued, "char");
+                Priority.Immediate, "char");
             // The HUB lock speaks window-level on entry (owner ruling 2).
             string locked = LockedText();
             if (locked != null && !_lockedSpoken)
@@ -154,7 +156,7 @@ namespace Sleeptalker.Sleeper2
                     _watchRow = null;
                     _checkAt = -1f;
                     _settleUntil = -1f;
-                    Table.Reset();
+                    Table.Reset(-1);
                 }
                 return;
             }
@@ -511,7 +513,8 @@ namespace Sleeptalker.Sleeper2
                 if (!_confirmSpoken)
                 {
                     _confirmSpoken = true;
-                    SpeechService.Say(Lex.T("char.confirm"), Priority.Queued, "char");
+                    // The answer to the player's Enter: spoken at once (2026-10-25).
+                    SpeechService.Say(Lex.T("char.confirm"), Priority.Immediate, "char");
                 }
                 _checkAt = Time.unscaledTime + 0.5f;
                 _settleUntil = Time.unscaledTime + 1f;

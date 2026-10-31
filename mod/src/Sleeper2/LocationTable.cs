@@ -352,7 +352,15 @@ namespace Sleeptalker.Sleeper2
                 // done card) speaks as-is — never under the Costs header (log
                 // finding 2026-08-02: "Costs ACTION COMPLETE, ENDURE").
                 if (costIsStatus)
+                {
                     sb.Append(' ').Append(costs).Append('.');
+                    // "ACTION COMPLETE" is also drawn on a card that merely shows
+                    // its last outcome and takes a new die (ride 2026-10-30: the
+                    // player heard "complete", left and re-entered the location to
+                    // try again). Say when it can be repeated.
+                    if (TakesNewDie(card))
+                        sb.Append(' ').Append(Lex.T("loc.repeatable"));
+                }
                 else
                     sb.Append(' ').Append(Lex.T("loc.col.costs")).Append(' ')
                       .Append(costs).Append('.');
@@ -523,6 +531,27 @@ namespace Sleeptalker.Sleeper2
             if (text == null) return null;
             string upper = text.ToUpperInvariant();
             return upper.Contains("LOCK") || upper.Contains("REQUIRED") ? text : null;
+        }
+
+        /// <summary>True when the card's Action Controller rests in a state that
+        /// accepts a new die: the outcome displays (Positive/Neutral/Negative
+        /// Outcome) carry DiceSlotted -> Reset, while Temp Complete and Action
+        /// Completed carry no DiceSlotted at all (decoded live 2026-10-30). The
+        /// controller is the card's child that owns an Action Identifier (DiceFlow:
+        /// the controller's parent IS the card).</summary>
+        private static bool TakesNewDie(Transform card)
+        {
+            foreach (var fsm in card.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                var id = fsm.FsmVariables.GetFsmString("Action Identifier");
+                if (id == null || string.IsNullOrEmpty(id.Value)) continue;
+                var state = fsm.Fsm != null ? fsm.Fsm.ActiveState : null;
+                if (state == null) return false;
+                foreach (var t in state.Transitions)
+                    if (t.EventName == "DiceSlotted") return true;
+                return false;
+            }
+            return false;
         }
 
         /// <summary>The card's own commit target: the dice-slot button for die

@@ -389,6 +389,9 @@ namespace Sleeptalker.Sleeper2
                 return row >= 0 && row < rows.Count ? rows[row].Section : 0;
             },
             SectionPrefix = s => s >= 0 && s < _sections.Count ? _sections[s] : "",
+            // The first row read names its section ("Hexport contracts."), which
+            // the map's opening line does not (2026-10-25).
+            SectionReset = -1,
             EmptyRow = () => Lex.T("map.empty"),
             EmptyCol = () => Lex.T("map.empty"),
             EmptyDetail = () => Lex.T("map.empty"),
@@ -526,8 +529,25 @@ namespace Sleeptalker.Sleeper2
                 // the invisible Gamepad Selection Button anchor parks at row 0.
                 _entered = true;
                 Table.Reset(RowOfSelected());
+                // The first Up/Down reads that starting row instead of stepping
+                // past it unheard (2026-10-25).
+                if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.DownArrow))
+                {
+                    Table.MoveRow(0);
+                    return true;
+                }
             }
             return Table.HandleKeys();
+        }
+
+        /// <summary>While a travel commit runs, the table stands down (Active) — but
+        /// its keys must not fall through to the game's own selection either: a
+        /// second Enter there clicked whatever was selected (2026-10-25).</summary>
+        public static bool TravelKeyGuard()
+        {
+            if (ModeModel.Current() != Mode.Map) return false;
+            if (GameQueries.MapSubWindowUp()) return false;
+            return TravelCommitInFlight();
         }
 
         /// <summary>Watches the plane dial: the zoom flip (Belt Button, ours or
@@ -706,6 +726,10 @@ namespace Sleeptalker.Sleeper2
             if (window == _subWindow) return;
             _subWindow = window;
             if (window == null) return;
+            // The crew selection window has its own table and opening line
+            // (CrewSelectTable, 2026-10-30): the drawn-text dump read every
+            // label in one breath, including a pre-settle "NO CREW SELECTED".
+            if (window.name == "Crew Window") return;
             string read = WindowDrawnText(window);
             // Owner ruling 2026-08-02: the crew confirm box renders only
             // "CONFIRM CREW" — the thing being confirmed (the loadout) stands
@@ -1156,8 +1180,11 @@ namespace Sleeptalker.Sleeper2
                     // Boot beat: the buttons' Cost Setup hasn't published yet
                     // (log 2026-08-03: every node costless on the first
                     // build) — don't cache a blind sort; rebuild next call.
+                    // Retry a tenth of a second later, not on every call: the -1
+                    // stamp rebuilt the whole belt several times per key press and
+                    // twice per frame for as long as no cost published (2026-10-25).
                     if (!anyCost && (reach.Count > 0 || blocked.Count > 0))
-                        _builtAt = -1f;
+                        _builtAt = Time.unscaledTime - CacheWindow + 0.1f;
                     reach.Sort((a, b) => _fuelSort[a].CompareTo(_fuelSort[b]));
                     blocked.Sort((a, b) => _fuelSort[a].CompareTo(_fuelSort[b]));
                     if (here != null)

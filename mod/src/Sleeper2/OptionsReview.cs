@@ -38,18 +38,35 @@ namespace Sleeptalker.Sleeper2
 
         public static bool IsActive()
         {
-            if (_panel == null || !_panel.activeInHierarchy)
-                _panel = GameObject.Find("PAUSE/Pause Canvas/Options Menu");
+            // Held through the PAUSE root, which also reaches the panel while it is
+            // hidden (a path Find of a hidden object searched the whole scene on
+            // every call, 2026-10-25).
+            if (_panel == null)
+            {
+                var root = GameObject.Find("PAUSE");
+                var t = root != null ? root.transform.Find("Pause Canvas/Options Menu") : null;
+                _panel = t != null ? t.gameObject : null;
+            }
             bool active = _panel != null && _panel.activeInHierarchy;
             if (active && !_wasActive)
             {
-                _row = 0;
+                // Row level: the first arrow reads the first setting (2026-10-25:
+                // it started on row 0 unread, so the first Down skipped it).
+                _row = -1;
                 _colorsLogged = false;
                 _mismatchLogged = false;
-                SpeechService.Say(Lex.T("options.intro"), Priority.Queued, "nav");
+                SpeechService.Say(Lex.T("options.intro"), Priority.Immediate, "nav");
             }
             _wasActive = active;
             return active;
+        }
+
+        /// <summary>Per frame while paused: the panel's opening is announced when it
+        /// opens, not at the next key press (2026-10-25).</summary>
+        public static void Tick()
+        {
+            if (!GameQueries.Paused()) { _wasActive = false; return; }
+            IsActive();
         }
 
         public static void Review(int direction)
@@ -60,6 +77,16 @@ namespace Sleeptalker.Sleeper2
             SpeakRow(rows[_row]);
         }
 
+        /// <summary>Left/Right/Enter before any Up/Down: land on the first setting
+        /// and read it, changing nothing.</summary>
+        private static bool LandFirst(List<Row> rows)
+        {
+            if (_row >= 0 && _row < rows.Count) return false;
+            _row = 0;
+            SpeakRow(rows[0]);
+            return true;
+        }
+
         /// <summary>Left/Right on a value row: native click of the neighboring
         /// value button — the commit path the game itself uses (onClick →
         /// SendEvent into the PAUSE FSM); applies live.</summary>
@@ -67,6 +94,7 @@ namespace Sleeptalker.Sleeper2
         {
             var rows = Rows();
             if (rows.Count == 0) return;
+            if (LandFirst(rows)) return;
             var row = rows[_row];
             if (row.Values.Count == 0)
             {
@@ -97,6 +125,7 @@ namespace Sleeptalker.Sleeper2
         {
             var rows = Rows();
             if (rows.Count == 0) return false;
+            if (LandFirst(rows)) return true;
             var row = rows[_row];
             if (row.Values.Count == 0 && row.Self != null)
             {

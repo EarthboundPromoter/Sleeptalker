@@ -22,6 +22,17 @@ namespace Sleeptalker.Middleware
             var controller = DialogueManager.instance;
             if (!ReferenceEquals(controller, _subscribed))
             {
+                // Leave the old controller first, so a controller that is replaced
+                // but not destroyed cannot deliver every event twice (2026-10-25).
+                if (!ReferenceEquals(_subscribed, null))
+                {
+                    try
+                    {
+                        _subscribed.conversationStarted -= OnStarted;
+                        _subscribed.conversationEnded -= OnEnded;
+                    }
+                    catch { }
+                }
                 if (controller != null)
                 {
                     controller.conversationStarted += OnStarted;
@@ -36,6 +47,7 @@ namespace Sleeptalker.Middleware
         private static void OnStarted(Transform actor)
         {
             ConversationActive = true;
+            DialogueState.ClearMenu();
             // U2: a fresh window announces its first named speaker once.
             DialogueState.LastAnnouncedSpeaker = "";
             // The dialogue-log attribution history is per-conversation, like the
@@ -52,6 +64,7 @@ namespace Sleeptalker.Middleware
         private static void OnEnded(Transform actor)
         {
             ConversationActive = false;
+            DialogueState.ClearMenu();
             try { ConversationEnded(); } catch { }
         }
     }

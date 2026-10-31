@@ -18,6 +18,13 @@ namespace Sleeptalker.Sleeper2
         {
             if (go == null) return null;
 
+            // The title's press-start gate (2026-10-27): its label is "CLICK TO START"
+            // in mouse mode and "PRESS [A glyph] TO START" in gamepad mode, whose glyph
+            // child the label read skips ("PRESS TO START"). The mod drives it with Enter.
+            if (go.name == "NEW GAME" && go.transform.parent != null
+                && go.transform.parent.name == "Landing Canvas")
+                return "Press Enter to start";
+
             // Difficulty select (owner ruling, first CS2 ride): highlighting a
             // difficulty auto-reads its full metadata — name, selected state, and
             // the rendered description lines. Everything else on that screen
